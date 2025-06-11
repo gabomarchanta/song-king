@@ -1,0 +1,17 @@
+# Entorno Virtual de Python
+.venv/
+
+# Archivos generados por el usuario
+uploads/
+static/stems/
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Archivos de configuración del editor
+.vscode/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
