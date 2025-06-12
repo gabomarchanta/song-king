@@ -1,0 +1,6 @@
+Flask==1.1.4
+MarkupSafe==2.0.1
+demucs
+basic-pitch
+numpy==1.26.4
+pretty_midi

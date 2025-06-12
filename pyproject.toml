@@ -1,9 +1,15 @@
 [project]
 name = "song-processor"
-version = "0.1.0"
+version = "0.4.0"
 requires-python = ">=3.8,<3.11"
 dependencies = [
     "Flask==1.1.4",
-    "spleeter==2.4.2",
-    "MarkupSafe==2.0.1"
+    "MarkupSafe==2.0.1",
+    "demucs",
+    "basic-pitch",
+    "numpy==1.26.4",
+    "pretty_midi"
 ]
+
+[tool.setuptools]
+py-modules = ["app", "tasks"]

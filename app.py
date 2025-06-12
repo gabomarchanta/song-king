@@ -1,66 +1,115 @@
-from flask import Flask, render_template, request, url_for
+from flask import Flask, render_template, request, url_for, redirect, flash, jsonify
 import os
 from werkzeug.utils import secure_filename
-from spleeter.separator import Separator
+import threading
+import pretty_midi
+import numpy as np
+from tasks import process_song
 
 app = Flask(__name__)
+app.secret_key = 'Gaboindi86'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['STEMS_FOLDER'] = 'static/stems'
+app.config['DEMUCS_MODEL'] = 'htdemucs'
 
-# Inicializamos el separador (esto puede tardar la primera vez)
-print("Cargando modelo de Spleeter...")
-separator = Separator('spleeter:2stems')
-print("Modelo cargado.")
-
-# Creamos las carpetas necesarias si no existen
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['STEMS_FOLDER'], exist_ok=True)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        if 'audio' not in request.files:
-            return render_template('index.html', error="No se seleccionó ningún archivo.")
+        if 'audio' not in request.files or not request.files['audio'].filename:
+            flash("Error: No se seleccionó ningún archivo.", "danger")
+            return redirect(url_for('index'))
         
         file = request.files['audio']
-        if file.filename == '':
-            return render_template('index.html', error="No se seleccionó ningún archivo.")
-        
-        # 1. Guardar el archivo subido de forma segura
         filename = secure_filename(file.filename)
         upload_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(upload_path)
 
-        # 2. Preparar la ruta de salida para Spleeter
-        song_name_without_ext = os.path.splitext(filename)[0]
-        # Esta es la carpeta base que le pasamos a Spleeter
-        output_destination_folder = os.path.join(app.config['STEMS_FOLDER'], song_name_without_ext)
+        thread = threading.Thread(target=process_song, args=(upload_path, app.config['STEMS_FOLDER']))
+        thread.start()
+
+        flash(f"¡Recibido! Tu canción '{filename}' se está procesando. Refresca en unos minutos para ver los resultados.", "info")
+        return redirect(url_for('index'))
+
+    processed_songs = []
+    for song_dir in os.listdir(app.config['STEMS_FOLDER']):
+        model_output_path = os.path.join(app.config['STEMS_FOLDER'], song_dir, app.config['DEMUCS_MODEL'])
         
-        print(f"Procesando {filename}...")
-        separator.separate_to_file(upload_path, output_destination_folder)
-        print("Procesamiento completado.")
-
-        # 3. CONSTRUIR LA RUTA CORRECTA A LOS ARCHIVOS DE SALIDA
-        # Spleeter crea una subcarpeta con el mismo nombre, aquí es donde están los .wav
-        actual_stems_path = os.path.join(output_destination_folder, song_name_without_ext)
-
-        stems_urls = []
-        # Verificamos si la carpeta de resultados existe
-        if os.path.isdir(actual_stems_path):
-            # Recorremos los archivos .wav dentro de la carpeta anidada
-            for stem_filename in sorted(os.listdir(actual_stems_path)):
-                if stem_filename.endswith('.wav'):
-                    # Creamos la ruta relativa a la carpeta 'static' para usarla con url_for
-                    # Ej: "stems/NOMBRE_CANCION/NOMBRE_CANCION/vocals.wav"
-                    url_path = os.path.join('stems', song_name_without_ext, song_name_without_ext, stem_filename).replace('\\', '/')
-                    stems_urls.append({
-                        'name': os.path.splitext(stem_filename)[0].capitalize(),
+        if os.path.isdir(model_output_path):
+            song_data = {'name': song_dir, 'stems': [], 'midi_url': None}
+            for file in sorted(os.listdir(model_output_path)):
+                url_path = os.path.join('stems', song_dir, app.config['DEMUCS_MODEL'], file).replace('\\', '/')
+                if file.endswith('.wav'):
+                    song_data['stems'].append({
+                        'name': os.path.splitext(file)[0].replace('_', ' ').title(),
                         'url': url_for('static', filename=url_path)
                     })
+                if file.endswith('.mid'):
+                    song_data['midi_url'] = url_for('static', filename=url_path)
+            processed_songs.append(song_data)
+            
+    return render_template('index.html', processed_songs=processed_songs)
+
+# --- ENDPOINT DE API (POSICIÓN CORRECTA) ---
+# Al estar aquí, ANTES de app.run(), Flask sí registra esta ruta.
+@app.route('/api/midi-data/<string:song_name>')
+def get_midi_data(song_name):
+    midi_filename = 'other_basic_pitch.mid'
+    full_path = os.path.join(app.config['STEMS_FOLDER'], song_name, app.config['DEMUCS_MODEL'], midi_filename)
+
+    if not os.path.exists(full_path):
+        return jsonify({"error": f"MIDI file not found at {full_path}"}), 404
+
+    try:
+        pm = pretty_midi.PrettyMIDI(full_path)
+        if not pm.instruments:
+            return jsonify({"notes": [], "tempo": 120}), 200
+
+        # Combinamos notas de todos los instrumentos y las ordenamos por tiempo de inicio
+        all_notes = []
+        for instrument in pm.instruments:
+            all_notes.extend(instrument.notes)
+        all_notes.sort(key=lambda x: x.start)
         
-        return render_template('index.html', stems=stems_urls)
+        # Filtramos y procesamos las notas para enviar al frontend
+        GUITAR_LOWEST_NOTE = 40
+        GUITAR_HIGHEST_NOTE = 88
+        MIN_NOTE_VELOCITY = 20
+        
+        processed_events = []
+        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        last_event_end = 0.0
 
-    return render_template('index.html')
+        for note in all_notes:
+            # Filtros de calidad
+            if not (GUITAR_LOWEST_NOTE <= note.pitch <= GUITAR_HIGHEST_NOTE): continue
+            if note.velocity < MIN_NOTE_VELOCITY: continue
+            
+            # --- LÓGICA PARA SILENCIOS Y NOTAS ---
+            rest_duration = note.start - last_event_end
+            # Añadir un silencio si la pausa es significativa
+            if rest_duration > 0.05:
+                processed_events.append({"type": "rest", "start_sec": last_event_end, "duration_sec": rest_duration})
 
+            # Añadir la nota actual
+            processed_events.append({
+                "type": "note",
+                "pitch": note.pitch,
+                "keys": [f"{note_names[note.pitch % 12]}/{note.pitch // 12 - 1}"],
+                "start_sec": note.start,
+                "duration_sec": note.end - note.start
+            })
+            last_event_end = note.end
+        
+        print(f"Se procesaron {len(processed_events)} eventos musicales (notas y silencios).")
+        return jsonify({"events": processed_events, "tempo": pm.estimate_tempo()})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# --- Punto de partida de la aplicación ---
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
