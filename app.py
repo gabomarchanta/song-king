@@ -6,12 +6,11 @@ import music21
 from tasks import process_song
 
 app = Flask(__name__)
-app.secret_key = 'tu_clave_secreta_aqui'
+app.secret_key = 'tu_clave_secreta'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['STEMS_FOLDER'] = 'static/stems'
 app.config['DEMUCS_MODEL'] = 'htdemucs'
 
-# Asegurarse de que las carpetas de subida y de salida existan
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['STEMS_FOLDER'], exist_ok=True)
 
@@ -25,8 +24,9 @@ def index():
         file = request.files['audio']
         filename = secure_filename(file.filename)
         
-        # Limpiar resultados antiguos para la misma canción para evitar conflictos
+        # Limpiar resultados antiguos para la misma canción
         song_name_without_ext = os.path.splitext(filename)[0]
+        # ¡LA RUTA CORRECTA A BORRAR!
         song_output_folder = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'], song_name_without_ext)
         if os.path.exists(song_output_folder):
             import shutil
@@ -36,30 +36,29 @@ def index():
         upload_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(upload_path)
 
-        # Iniciar el procesamiento pesado en un hilo separado
         thread = threading.Thread(target=process_song, args=(upload_path, app.config['STEMS_FOLDER']))
         thread.start()
 
         flash(f"¡Recibido! Tu canción '{filename}' se está procesando. Refresca la página en unos minutos.", "info")
         return redirect(url_for('index'))
 
-    # Lógica para mostrar las canciones ya procesadas
+    # --- LÓGICA DE VISUALIZACIÓN CORREGIDA ---
     processed_songs = []
-    # La carpeta de salida de Demucs ahora es una subcarpeta
-    demucs_output_dir = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'])
-    if os.path.exists(demucs_output_dir):
-        # Recorremos las carpetas de cada canción dentro del directorio de Demucs
-        for song_dir in sorted(os.listdir(demucs_output_dir)):
-            song_path = os.path.join(demucs_output_dir, song_dir)
-            if os.path.isdir(song_path):
-                song_data = {'name': song_dir, 'stems': [], 'has_midi': False}
-                for file in sorted(os.listdir(song_path)):
+    if os.path.exists(app.config['STEMS_FOLDER']):
+        # Recorremos las carpetas de cada canción en la raíz de 'stems'
+        for song_dir_name in sorted(os.listdir(app.config['STEMS_FOLDER'])):
+            # La carpeta de resultados ahora está en 'stems/cancion/modelo'
+            model_output_path = os.path.join(app.config['STEMS_FOLDER'], song_dir_name, app.config['DEMUCS_MODEL'])
+            
+            if os.path.isdir(model_output_path):
+                song_data = {'name': song_dir_name, 'stems': [], 'has_midi': False}
+                for file in sorted(os.listdir(model_output_path)):
                     # Construimos la URL correcta
-                    url_path = os.path.join('stems', app.config['DEMUCS_MODEL'], song_dir, file).replace('\\', '/')
+                    url_path = os.path.join('stems', song_dir_name, app.config['DEMUCS_MODEL'], file).replace('\\', '/')
                     if file.endswith('.wav'):
                         song_data['stems'].append({'name': os.path.splitext(file)[0].title(), 'url': url_for('static', filename=url_path)})
                     if file.endswith('.mid'):
-                        song_data['has_midi'] = True # Marcamos que hay MIDI para mostrar el botón
+                        song_data['has_midi'] = True
                 processed_songs.append(song_data)
             
     return render_template('index.html', processed_songs=processed_songs)
@@ -68,7 +67,7 @@ def index():
 @app.route('/api/musicxml/<string:song_name>')
 def get_musicxml_data(song_name):
     # La ruta base a los resultados de la canción
-    base_path = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'], song_name)
+    base_path = os.path.join(app.config['STEMS_FOLDER'], song_name, app.config['DEMUCS_MODEL'])
     if not os.path.isdir(base_path):
         return "Carpeta de resultados no encontrada", 404
 

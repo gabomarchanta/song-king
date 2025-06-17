@@ -69,21 +69,30 @@ def process_song(upload_path, stems_folder):
         song_name_without_ext = os.path.splitext(os.path.basename(upload_path))[0]
         model = "htdemucs"
         
-        # --- ¡EL COMANDO DE LA VICTORIA! ---
-        # Este patrón le dice a Demucs que cree una carpeta con el nombre de la canción
-        # y dentro, los archivos de pista con su nombre y extensión.
-        # {name} -> nombre del archivo de entrada sin extensión
-        # {track} -> nombre de la pista (vocals, bass, etc.)
-        # {ext} -> la extensión (.wav)
-        filename_pattern = f"\"{model}/{{name}}/{{track}}.{{ext}}\""
-        command = f"python3 -m demucs -n {model} -o \"{stems_folder}\" --filename {filename_pattern} \"{upload_path}\""
+        # --- ¡LA LÓGICA DE LA VICTORIA! ---
+        # 1. Dejamos que Demucs guarde donde quiera
+        command = f"python3 -m demucs -n {model} \"{upload_path}\""
         
         print(f"TASK [Main]: Separando pistas con Demucs...")
         subprocess.run(shlex.split(command), check=True)
         print("TASK [Main]: Separación completada.")
 
-        # Ahora la ruta de salida es correcta
-        output_dir = os.path.join(stems_folder, model, song_name_without_ext)
+        # 2. Definimos dónde están los archivos y a dónde queremos moverlos
+        demucs_default_output = os.path.join('separated', model, song_name_without_ext)
+        final_output_dir = os.path.join(stems_folder, song_name_without_ext, model)
+        
+        # 3. ¡Movemos la carpeta de resultados!
+        print(f"TASK [Main]: Moviendo resultados de {demucs_default_output} a {final_output_dir}")
+        if os.path.exists(demucs_default_output):
+            shutil.move(demucs_default_output, final_output_dir)
+            # (Opcional) Borrar la carpeta 'separated' si queda vacía
+            if not os.listdir(os.path.join('separated', model)):
+                shutil.rmtree('separated')
+        else:
+            raise FileNotFoundError(f"La carpeta de salida de Demucs no se encontró en {demucs_default_output}")
+
+        # El resto del pipeline ahora funciona porque 'output_dir' es la ruta correcta.
+        output_dir = final_output_dir
         tracks_to_transcribe = ["vocals", "bass", "other"]
 
         for track_name in tracks_to_transcribe:
@@ -100,7 +109,7 @@ def process_song(upload_path, stems_folder):
         other_midi_path = os.path.join(output_dir, "other_basic_pitch.mid")
         if os.path.exists(other_audio_path) and os.path.exists(other_midi_path):
             separate_instruments_in_other(other_audio_path, other_midi_path, output_dir)
-            os.remove(other_midi_path) 
+            os.remove(other_midi_path)
 
         print(f"TASK [Main]: Proceso completado para {song_name_without_ext}.")
 
@@ -108,7 +117,7 @@ def process_song(upload_path, stems_folder):
         import traceback
         traceback.print_exc()
 
-# Rellenamos la función de clustering
+# Pega aquí la función separate_instruments_in_other completa que ya tenías
 def separate_instruments_in_other(audio_path, midi_path, output_dir):
     from basic_pitch import ICASSP_2022_MODEL_PATH
     try:
