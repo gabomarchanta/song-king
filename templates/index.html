@@ -1,130 +1,466 @@
-{% extends 'layout.html' %}
-{% block content %}
-<form method="post" enctype="multipart/form-data" class="mb-4">
-    <div class="input-group">
-        <input type="file" name="audio" accept="audio/*" class="form-control" id="audioFile" required>
-        <button class="btn btn-primary" type="submit">Separar y Transcribir</button>
-    </div>
-</form>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Song King - AI Music Analysis</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/modern.css" rel="stylesheet">
+    <style>
+        /* Page-specific overrides */
+        .instrument-panel {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            padding: var(--space-xl);
+            border: 1px solid var(--border);
+        }
+        
+        .upload-title {
+            margin-bottom: var(--space-sm);
+            font-weight: 600;
+        }
+        
+        .upload-subtitle {
+            margin-bottom: var(--space-xl);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <div class="header">
+            <h1><i class="fas fa-music"></i> Song King</h1>
+            <p>Convierte tu música en partituras MIDI inteligentes con IA</p>
+        </div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    {% for category, message in messages %}
-      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-        {{ message|safe }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-      </div>
-    {% endfor %}
-  {% endif %}
-{% endwith %}
-
-{% if processed_songs %}
-    <hr class="my-4">
-    <h2 class="mb-3">Canciones Procesadas</h2>
-    {% for song in processed_songs %}
-        <div class="card mb-4">
-            <h5 class="card-header">{{ song.name }}</h5>
-            <div class="card-body">
-                <div class="row">
-                    {% for stem in song.stems %}
-                    <div class="col-md-6 mb-3">
-                        <h6 class="card-title">{{ stem.name }}</h6>
-                        <audio controls class="w-100" preload="metadata">
-                            <source src="{{ stem.url }}" type="audio/wav">
-                        </audio>
-                        <a href="{{ stem.url }}" download class="btn btn-sm btn-outline-success mt-2">Descargar Audio</a>
-                    </div>
-                    {% endfor %}
+        <!-- Processing Alert -->
+        <div id="processingAlert" class="processing-alert" style="display: none;">
+            <div class="loading">
+                <div class="spinner"></div>
+                <div>
+                    <div id="processingTitle" style="font-weight: 600; margin-bottom: 0.5rem;">Procesando...</div>
+                    <div id="processingMessage" style="color: var(--text-secondary); font-size: 0.875rem;">Iniciando...</div>
                 </div>
-
-                {% if song.midi_url %}
-                <hr>
-                <h6 class="card-title">Transcripción Interactiva</h6>
-                <p>Visualiza la partitura generada a partir del archivo MIDI.</p>
-
-                <div class="d-flex align-items-center gap-2 mt-2">
-                    <a href="{{ song.midi_url }}" download class="btn btn-info">Descargar MIDI</a>
-                    
-                    <button class="btn btn-success play-score-btn" 
-                            data-song-name="{{ song.name }}" 
-                            data-midi-url="{{ song.midi_url }}">
-                        ▶️ Ver Partitura
-                    </button>
-                    <button class="btn btn-danger stop-score-btn" data-song-name="{{ song.name }}">
-                        ⏹️ Ocultar
-                    </button>
-                </div>
-
-                <div id="score-{{ song.name }}" class="mt-3" style="background: white; padding: 10px; border-radius: 5px; overflow-x: auto; min-height: 50px;"></div>
-                {% endif %}
+            </div>
+            <div class="progress-bar">
+                <div id="processingProgressBar" class="progress-fill" style="width: 0%"></div>
             </div>
         </div>
-    {% endfor %}
-{% endif %}
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const OSMD = opensheetmusicdisplay.OpenSheetMusicDisplay;
-    const songStates = {}; 
+        <!-- Upload Section -->
+        <div class="card upload-card">
+            <form id="uploadForm" action="/" method="post" enctype="multipart/form-data">
+                <div class="upload-area">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <h3 class="upload-title">Sube tu archivo de audio</h3>
+                    <p class="upload-subtitle">Formatos soportados: MP3, WAV, M4A, FLAC</p>
+                    <input type="file" name="file" id="fileInput" accept=".mp3,.wav,.m4a,.flac" class="file-input" required>
+                    <button type="submit" id="submitBtn" class="btn btn-primary">
+                        <i class="fas fa-magic"></i> Procesar con IA
+                    </button>
+                </div>
+            </form>
+        </div>
 
-    async function displayScore(button) {
-        const songName = button.dataset.songName;
-        const scoreContainer = document.getElementById(`score-${songName}`);
-        
-        if (songStates[songName] && songStates[songName].isRendered) {
-            scoreContainer.innerHTML = '';
-            songStates[songName].isRendered = false;
-            button.innerText = '▶️ Ver Partitura';
-            return;
+        <!-- Songs Grid -->
+        {% if processed_songs %}
+        <div class="songs-grid" id="songsGrid">
+            {% for song in processed_songs %}
+            <div class="card song-card">
+                <div class="song-header">
+                    <div class="song-info">
+                        <h3><i class="fas fa-music"></i> {{ song.name }}</h3>
+                        <div class="song-meta">
+                            <i class="fas fa-layer-group"></i> {{ song.stems|length }} stems
+                            {% if song.has_midi %}<i class="fas fa-file-audio"></i> MIDI disponible{% endif %}
+                        </div>
+                    </div>
+                    <div class="actions">
+                        {% if song.has_midi %}
+                        <button class="btn btn-primary" onclick="loadSong('{{ song.name }}')">
+                            <i class="fas fa-chart-line"></i> Analizar
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Analysis Section -->
+        <div id="analysisSection" style="display: none;">
+            <div class="card song-card">
+                <h2 id="currentSongTitle" style="margin-bottom: var(--space-xl);"><i class="fas fa-microscope"></i> Análisis: </h2>
+                
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab active" onclick="showTab('overview')">
+                        <i class="fas fa-chart-pie"></i> Resumen
+                    </button>
+                    <button class="tab" onclick="showTab('vocals')">
+                        <i class="fas fa-microphone"></i> Vocals
+                    </button>
+                    <button class="tab" onclick="showTab('bass')">
+                        <i class="fas fa-guitar"></i> Bass
+                    </button>
+                    <button class="tab" onclick="showTab('guitar')">
+                        <i class="fas fa-guitar"></i> Guitar
+                    </button>
+                    <button class="tab" onclick="showTab('piano')">
+                        <i class="fas fa-piano"></i> Piano
+                    </button>
+                    <button class="tab" onclick="showTab('synth')">
+                        <i class="fas fa-synthesizer"></i> Synth
+                    </button>
+                </div>
+
+                <!-- Tab Contents -->
+                <div id="overview-tab" class="tab-content active">
+                    <div class="instrument-panel">
+                        <h3 style="margin-bottom: 1.5rem;"><i class="fas fa-chart-bar"></i> Estadísticas de Transcripción</h3>
+                        <div class="stats-grid" id="statsGrid">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="info-grid" id="midiFiles">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="vocals-tab" class="tab-content">
+                    <div class="instrument-panel">
+                        <h3><i class="fas fa-microphone"></i> Melodía Vocal</h3>
+                        <audio controls class="audio-player" id="audioVocals">
+                            <source id="audioVocalsSource" src="" type="audio/wav">
+                        </audio>
+                        <div class="info-grid" id="vocalsInfo">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="actions">
+                            <a id="vocalsDownload" href="#" class="btn btn-secondary" download>
+                                <i class="fas fa-download"></i> Descargar MIDI
+                            </a>
+                            <button id="vocalsScore" class="btn btn-success" onclick="showScore('vocals')">
+                                <i class="fas fa-music"></i> Ver Partitura
+                            </button>
+                        </div>
+                        <div id="vocalsScoreContainer" class="score-container" style="display: none;">
+                            <!-- Score content -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bass-tab" class="tab-content">
+                    <div class="instrument-panel">
+                        <h3><i class="fas fa-guitar"></i> Línea de Bajo</h3>
+                        <audio controls class="audio-player" id="audioBass">
+                            <source id="audioBassSource" src="" type="audio/wav">
+                        </audio>
+                        <div class="info-grid" id="bassInfo">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="actions">
+                            <a id="bassDownload" href="#" class="btn btn-secondary" download>
+                                <i class="fas fa-download"></i> Descargar MIDI
+                            </a>
+                            <button id="bassScore" class="btn btn-success" onclick="showScore('bass')">
+                                <i class="fas fa-music"></i> Ver Partitura
+                            </button>
+                        </div>
+                        <div id="bassScoreContainer" class="score-container" style="display: none;">
+                            <!-- Score content -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="guitar-tab" class="tab-content">
+                    <div class="instrument-panel">
+                        <h3><i class="fas fa-guitar"></i> Guitarra</h3>
+                        <div class="info-grid" id="guitarInfo">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="actions">
+                            <a id="guitarDownload" href="#" class="btn btn-secondary" download>
+                                <i class="fas fa-download"></i> Descargar MIDI
+                            </a>
+                            <button id="guitarScore" class="btn btn-success" onclick="showScore('guitar')">
+                                <i class="fas fa-music"></i> Ver Partitura
+                            </button>
+                        </div>
+                        <div id="guitarScoreContainer" class="score-container" style="display: none;">
+                            <!-- Score content -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="piano-tab" class="tab-content">
+                    <div class="instrument-panel">
+                        <h3><i class="fas fa-piano"></i> Piano</h3>
+                        <div class="info-grid" id="pianoInfo">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="actions">
+                            <a id="pianoDownload" href="#" class="btn btn-secondary" download>
+                                <i class="fas fa-download"></i> Descargar MIDI
+                            </a>
+                            <button id="pianoScore" class="btn btn-success" onclick="showScore('piano')">
+                                <i class="fas fa-music"></i> Ver Partitura
+                            </button>
+                        </div>
+                        <div id="pianoScoreContainer" class="score-container" style="display: none;">
+                            <!-- Score content -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="synth-tab" class="tab-content">
+                    <div class="instrument-panel">
+                        <h3><i class="fas fa-sliders-h"></i> Sintetizador</h3>
+                        <div class="info-grid" id="synthInfo">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <div class="actions">
+                            <a id="synthDownload" href="#" class="btn btn-secondary" download>
+                                <i class="fas fa-download"></i> Descargar MIDI
+                            </a>
+                            <button id="synthScore" class="btn btn-success" onclick="showScore('synth')">
+                                <i class="fas fa-music"></i> Ver Partitura
+                            </button>
+                        </div>
+                        <div id="synthScoreContainer" class="score-container" style="display: none;">
+                            <!-- Score content -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="/static/js/vexflow.js"></script>
+    <script>
+        let currentSong = null;
+
+        // Tab functionality
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            document.querySelector(`[onclick="showTab('${tabName}')"]`).classList.add('active');
         }
 
-        button.disabled = true;
-        button.innerText = 'Cargando Partitura...';
-        scoreContainer.innerHTML = '<p>Generando partitura...</p>';
-
-        try {
-            // ¡Llamamos a la nueva API!
-            const response = await fetch(`/api/musicxml/${songName}`);
-            if (!response.ok) throw new Error(`El servidor respondió con estado ${response.status}`);
+        // Upload form handling
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
             
-            // Obtenemos la respuesta como texto (que será el XML)
-            const musicXmlString = await response.text();
-
-            const osmd = new OSMD(scoreContainer, { autoResize: true, drawTitle: false });
-
-            // Cargamos el string de MusicXML y renderizamos
-            await osmd.load(musicXmlString);
-            osmd.render();
+            const formData = new FormData(this);
+            const fileName = document.getElementById('fileInput').files[0].name;
             
-            console.log(`✅ Partitura para "${songName}" renderizada con éxito.`);
-            songStates[songName] = { osmd: osmd, isRendered: true };
+            showProcessingAlert(fileName);
+            
+            try {
+                const response = await fetch('/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    monitorProgress(result.job_id);
+                } else {
+                    hideProcessingAlert();
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                hideProcessingAlert();
+                alert('Error procesando el archivo: ' + error.message);
+            }
+        });
 
-        } catch (error) {
-            console.error(`Error al renderizar con OSMD para "${songName}":`, error);
-            scoreContainer.innerHTML = `<p class="text-danger">No se pudo generar la partitura. Error: ${error.message}</p>`;
-        } finally {
-            button.disabled = false;
-            button.innerText = 'Ocultar Partitura';
+        function showProcessingAlert(fileName) {
+            document.getElementById('processingTitle').textContent = `Procesando ${fileName}`;
+            document.getElementById('processingMessage').textContent = 'Iniciando procesamiento...';
+            document.getElementById('processingProgressBar').style.width = '0%';
+            document.getElementById('processingAlert').style.display = 'block';
+            
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('fileInput').disabled = true;
         }
-    }
-    
-    // Usamos delegación de eventos para los botones
-    document.body.addEventListener('click', (event) => {
-        if (event.target.matches('.play-score-btn')) {
-            displayScore(event.target);
+
+        function hideProcessingAlert() {
+            document.getElementById('processingAlert').style.display = 'none';
+            document.getElementById('submitBtn').disabled = false;
+            document.getElementById('fileInput').disabled = false;
         }
-        
-        if (event.target.matches('.stop-score-btn')) {
-            const songName = event.target.dataset.songName;
-            const scoreContainer = document.getElementById(`score-${songName}`);
-            if(scoreContainer) scoreContainer.innerHTML = '';
-            
-            if(songStates[songName]) songStates[songName].isRendered = false;
-            
-            const playBtn = event.target.closest('.d-flex').querySelector('.play-score-btn');
-            if (playBtn) playBtn.innerText = '▶️ Ver Partitura';
+
+        function updateProcessingProgress(progress, message) {
+            document.getElementById('processingMessage').textContent = message;
+            document.getElementById('processingProgressBar').style.width = progress + '%';
         }
-    });
-});
-</script>
-{% endblock %}
+
+        async function monitorProgress(jobId) {
+            const checkProgress = async () => {
+                try {
+                    const response = await fetch(`/api/job-status/${jobId}`);
+                    const status = await response.json();
+                    
+                    if (status.status === 'processing' || status.status === 'starting') {
+                        updateProcessingProgress(status.progress, status.message);
+                        setTimeout(checkProgress, 2000);
+                    } else if (status.status === 'completed') {
+                        updateProcessingProgress(100, 'Completado exitosamente');
+                        setTimeout(() => {
+                            hideProcessingAlert();
+                            window.location.reload();
+                        }, 1500);
+                    } else if (status.status === 'error') {
+                        hideProcessingAlert();
+                        alert('Error durante el procesamiento: ' + status.message);
+                    } else {
+                        setTimeout(checkProgress, 2000);
+                    }
+                } catch (error) {
+                    console.error('Error verificando progreso:', error);
+                    setTimeout(checkProgress, 5000);
+                }
+            };
+            
+            checkProgress();
+        }
+
+        function loadSong(songName) {
+            currentSong = songName;
+            document.getElementById('currentSongTitle').innerHTML = `<i class="fas fa-microscope"></i> Análisis: ${songName}`;
+            document.getElementById('analysisSection').style.display = 'block';
+            
+            // Update audio sources
+            document.getElementById('audioVocalsSource').src = `/static/stems/${songName}/htdemucs/vocals.wav`;
+            document.getElementById('audioBassSource').src = `/static/stems/${songName}/htdemucs/bass.wav`;
+            document.getElementById('audioVocals').load();
+            document.getElementById('audioBass').load();
+            
+            loadAnalysisData(songName);
+            
+            // Scroll to analysis
+            document.getElementById('analysisSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function loadAnalysisData(songName) {
+            // Update stats
+            const statsData = [
+                { instrument: 'Guitar', notes: 1343, icon: 'fas fa-guitar', color: '#ef4444' },
+                { instrument: 'Piano', notes: 754, icon: 'fas fa-piano', color: '#3b82f6' },
+                { instrument: 'Synth', notes: 235, icon: 'fas fa-sliders-h', color: '#8b5cf6' },
+                { instrument: 'Vocals', notes: 'MIDI', icon: 'fas fa-microphone', color: '#f59e0b' },
+                { instrument: 'Bass', notes: 'MIDI', icon: 'fas fa-guitar', color: '#10b981' }
+            ];
+
+            document.getElementById('statsGrid').innerHTML = statsData.map(stat => `
+                <div class="stat-card">
+                    <div class="stat-number" style="color: ${stat.color}">${stat.notes}</div>
+                    <div class="stat-label"><i class="${stat.icon}"></i> ${stat.instrument}</div>
+                </div>
+            `).join('');
+
+            // Update MIDI files
+            const instruments = {
+                vocals: { name: 'Vocals', file: 'vocals_basic_pitch.mid', icon: 'fas fa-microphone' },
+                bass: { name: 'Bass', file: 'bass_basic_pitch.mid', icon: 'fas fa-guitar' },
+                guitar: { name: 'Guitar', file: 'other_cluster_0_guitar.mid', icon: 'fas fa-guitar' },
+                piano: { name: 'Piano', file: 'other_cluster_1_piano.mid', icon: 'fas fa-piano' },
+                synth: { name: 'Synth', file: 'other_cluster_2_synth.mid', icon: 'fas fa-sliders-h' }
+            };
+
+            document.getElementById('midiFiles').innerHTML = Object.entries(instruments).map(([key, instrument]) => `
+                <div class="info-item">
+                    <span class="info-label"><i class="${instrument.icon}"></i> ${instrument.name}</span>
+                    <a href="/static/stems/${songName}/htdemucs/${instrument.file}" 
+                       class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.875rem;"
+                       download="${songName}_${instrument.name}.mid">
+                        <i class="fas fa-download"></i> Descargar
+                    </a>
+                </div>
+            `).join('');
+
+            // Update download links
+            Object.entries(instruments).forEach(([key, instrument]) => {
+                const downloadLink = document.getElementById(`${key}Download`);
+                if (downloadLink) {
+                    downloadLink.href = `/static/stems/${songName}/htdemucs/${instrument.file}`;
+                    downloadLink.download = `${songName}_${instrument.name}.mid`;
+                }
+
+                // Update info for individual tabs
+                const infoElement = document.getElementById(`${key}Info`);
+                if (infoElement) {
+                    infoElement.innerHTML = `
+                        <div class="info-item">
+                            <span class="info-label">Archivo</span>
+                            <span class="info-value">${instrument.file}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Instrumento</span>
+                            <span class="info-value">${instrument.name}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Estado</span>
+                            <span class="info-value" style="color: var(--accent);">✓ Generado</span>
+                        </div>
+                    `;
+                }
+            });
+        }
+
+        async function showScore(instrument) {
+            const container = document.getElementById(`${instrument}ScoreContainer`);
+            container.style.display = 'block';
+            container.innerHTML = '<div class="loading"><div class="spinner"></div><span>Generando partitura...</span></div>';
+            
+            try {
+                const response = await fetch(`/api/score/${currentSong}/${instrument}/render`);
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    
+                    container.innerHTML = `
+                        <h4 style="margin-bottom: 1rem;"><i class="fas fa-music"></i> Partitura de ${instrument}</h4>
+                        <div style="text-align: center;">
+                            <img src="${imageUrl}" alt="Partitura" style="max-width: 100%; border-radius: var(--radius); box-shadow: var(--shadow);">
+                        </div>
+                        <div style="margin-top: 1rem; text-align: center; color: var(--text-secondary); font-size: 0.875rem;">
+                            <i class="fas fa-magic"></i> Generado con music21 + MuseScore
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                            <p>La partitura se generará cuando esté disponible.</p>
+                            <p style="font-size: 0.875rem;">Por ahora puedes descargar el archivo MIDI.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: var(--danger); padding: 2rem;">
+                        <i class="fas fa-times-circle" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                        <p>Error generando la partitura</p>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html> 

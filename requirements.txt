@@ -1,3 +1,10 @@
-Flask==1.1.4
-spleeter==2.4.2
-MarkupSafe==2.0.1
+Flask>=2.3.0,<3.0.0
+MarkupSafe>=2.1.0
+Werkzeug>=2.3.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+music21
+librosa
+scikit-learn
+pretty_midi
+demucs>=4.0.0
+basic-pitch>=0.3.0 
