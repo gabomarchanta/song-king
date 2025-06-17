@@ -1,13 +1,16 @@
 # Entorno Virtual de Python
 .venv/
 
-# Archivos generados por el usuario
+# Archivos generados por la aplicación
 uploads/
 static/stems/
 
-# Caché de Python
+# Caché de Python y archivos de compilación
 __pycache__/
 *.pyc
+build/
+dist/
+*.egg-info/
 
 # Archivos de configuración del editor
 .vscode/
@@ -15,3 +18,8 @@ __pycache__/
 # Archivos del sistema operativo
 .DS_Store
 Thumbs.db
+
+# Archivos de prueba y temporales que hemos creado
+manual_test.py
+test_gpu.py
+MuseScore-3.6.2.AppImage

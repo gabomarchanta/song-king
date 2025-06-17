@@ -1,17 +1,17 @@
-from flask import Flask, render_template, request, url_for, redirect, flash, jsonify
+from flask import Flask, render_template, request, url_for, redirect, flash, jsonify, Response
 import os
 from werkzeug.utils import secure_filename
 import threading
-import pretty_midi
-import numpy as np
+import music21
 from tasks import process_song
 
 app = Flask(__name__)
-app.secret_key = 'Gaboindi86'
+app.secret_key = 'tu_clave_secreta_aqui'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['STEMS_FOLDER'] = 'static/stems'
 app.config['DEMUCS_MODEL'] = 'htdemucs'
 
+# Asegurarse de que las carpetas de subida y de salida existan
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['STEMS_FOLDER'], exist_ok=True)
 
@@ -24,92 +24,119 @@ def index():
         
         file = request.files['audio']
         filename = secure_filename(file.filename)
+        
+        # Limpiar resultados antiguos para la misma canción para evitar conflictos
+        song_name_without_ext = os.path.splitext(filename)[0]
+        song_output_folder = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'], song_name_without_ext)
+        if os.path.exists(song_output_folder):
+            import shutil
+            shutil.rmtree(song_output_folder)
+            print(f"Limpiando carpeta de resultados antiguos para {song_name_without_ext}")
+
         upload_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(upload_path)
 
+        # Iniciar el procesamiento pesado en un hilo separado
         thread = threading.Thread(target=process_song, args=(upload_path, app.config['STEMS_FOLDER']))
         thread.start()
 
-        flash(f"¡Recibido! Tu canción '{filename}' se está procesando. Refresca en unos minutos para ver los resultados.", "info")
+        flash(f"¡Recibido! Tu canción '{filename}' se está procesando. Refresca la página en unos minutos.", "info")
         return redirect(url_for('index'))
 
+    # Lógica para mostrar las canciones ya procesadas
     processed_songs = []
-    for song_dir in os.listdir(app.config['STEMS_FOLDER']):
-        model_output_path = os.path.join(app.config['STEMS_FOLDER'], song_dir, app.config['DEMUCS_MODEL'])
-        
-        if os.path.isdir(model_output_path):
-            song_data = {'name': song_dir, 'stems': [], 'midi_url': None}
-            for file in sorted(os.listdir(model_output_path)):
-                url_path = os.path.join('stems', song_dir, app.config['DEMUCS_MODEL'], file).replace('\\', '/')
-                if file.endswith('.wav'):
-                    song_data['stems'].append({
-                        'name': os.path.splitext(file)[0].replace('_', ' ').title(),
-                        'url': url_for('static', filename=url_path)
-                    })
-                if file.endswith('.mid'):
-                    song_data['midi_url'] = url_for('static', filename=url_path)
-            processed_songs.append(song_data)
+    # La carpeta de salida de Demucs ahora es una subcarpeta
+    demucs_output_dir = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'])
+    if os.path.exists(demucs_output_dir):
+        # Recorremos las carpetas de cada canción dentro del directorio de Demucs
+        for song_dir in sorted(os.listdir(demucs_output_dir)):
+            song_path = os.path.join(demucs_output_dir, song_dir)
+            if os.path.isdir(song_path):
+                song_data = {'name': song_dir, 'stems': [], 'has_midi': False}
+                for file in sorted(os.listdir(song_path)):
+                    # Construimos la URL correcta
+                    url_path = os.path.join('stems', app.config['DEMUCS_MODEL'], song_dir, file).replace('\\', '/')
+                    if file.endswith('.wav'):
+                        song_data['stems'].append({'name': os.path.splitext(file)[0].title(), 'url': url_for('static', filename=url_path)})
+                    if file.endswith('.mid'):
+                        song_data['has_midi'] = True # Marcamos que hay MIDI para mostrar el botón
+                processed_songs.append(song_data)
             
     return render_template('index.html', processed_songs=processed_songs)
 
-# --- ENDPOINT DE API (POSICIÓN CORRECTA) ---
-# Al estar aquí, ANTES de app.run(), Flask sí registra esta ruta.
-@app.route('/api/midi-data/<string:song_name>')
-def get_midi_data(song_name):
-    midi_filename = 'other_basic_pitch.mid'
-    full_path = os.path.join(app.config['STEMS_FOLDER'], song_name, app.config['DEMUCS_MODEL'], midi_filename)
 
-    if not os.path.exists(full_path):
-        return jsonify({"error": f"MIDI file not found at {full_path}"}), 404
+@app.route('/api/musicxml/<string:song_name>')
+def get_musicxml_data(song_name):
+    # La ruta base a los resultados de la canción
+    base_path = os.path.join(app.config['STEMS_FOLDER'], app.config['DEMUCS_MODEL'], song_name)
+    if not os.path.isdir(base_path):
+        return "Carpeta de resultados no encontrada", 404
 
     try:
-        pm = pretty_midi.PrettyMIDI(full_path)
-        if not pm.instruments:
-            return jsonify({"notes": [], "tempo": 120}), 200
+        # Configurar el entorno de music21 para usar MuseScore
+        us = music21.environment.UserSettings()
+        us['musicxmlPath'] = '/usr/local/bin/mscore-launcher'
+        us['musescoreDirectPNGPath'] = '/usr/local/bin/mscore-launcher'
 
-        # Combinamos notas de todos los instrumentos y las ordenamos por tiempo de inicio
-        all_notes = []
-        for instrument in pm.instruments:
-            all_notes.extend(instrument.notes)
-        all_notes.sort(key=lambda x: x.start)
+        score = music21.stream.Score()
         
-        # Filtramos y procesamos las notas para enviar al frontend
-        GUITAR_LOWEST_NOTE = 40
-        GUITAR_HIGHEST_NOTE = 88
-        MIN_NOTE_VELOCITY = 20
-        
-        processed_events = []
-        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-        last_event_end = 0.0
+        # Mapa para asignar un instrumento y clave a cada tipo de MIDI
+        instrument_map = {
+            'vocals_basic_pitch': {'name': 'Vocal Melody', 'instrument': music21.instrument.Vocalist(), 'clef': music21.clef.TrebleClef()},
+            'bass_basic_pitch': {'name': 'Bass Line', 'instrument': music21.instrument.ElectricBass(), 'clef': music21.clef.BassClef()},
+            'other_cluster_0_guitar': {'name': 'Guitar 1 (Cluster)', 'instrument': music21.instrument.AcousticGuitar(), 'clef': music21.clef.TrebleClef()},
+            'other_cluster_1_piano': {'name': 'Piano (Cluster)', 'instrument': music21.instrument.Piano(), 'clef': music21.clef.TrebleClef()},
+            'other_cluster_2_synth': {'name': 'Synth (Cluster)', 'instrument': music21.instrument.SynthLead(), 'clef': music21.clef.TrebleClef()}
+        }
 
-        for note in all_notes:
-            # Filtros de calidad
-            if not (GUITAR_LOWEST_NOTE <= note.pitch <= GUITAR_HIGHEST_NOTE): continue
-            if note.velocity < MIN_NOTE_VELOCITY: continue
+        # Iterar sobre todos los archivos .mid en la carpeta de resultados
+        for midi_file in sorted(os.listdir(base_path)):
+            if not midi_file.endswith('.mid'): 
+                continue
+
+            file_key = os.path.splitext(midi_file)[0]
+            # Encontrar la configuración correcta para esta parte
+            part_info = next((v for k, v in instrument_map.items() if k in file_key), None)
             
-            # --- LÓGICA PARA SILENCIOS Y NOTAS ---
-            rest_duration = note.start - last_event_end
-            # Añadir un silencio si la pausa es significativa
-            if rest_duration > 0.05:
-                processed_events.append({"type": "rest", "start_sec": last_event_end, "duration_sec": rest_duration})
+            if not part_info:
+                print(f"API: Saltando archivo MIDI no mapeado: {midi_file}")
+                continue
 
-            # Añadir la nota actual
-            processed_events.append({
-                "type": "note",
-                "pitch": note.pitch,
-                "keys": [f"{note_names[note.pitch % 12]}/{note.pitch // 12 - 1}"],
-                "start_sec": note.start,
-                "duration_sec": note.end - note.start
-            })
-            last_event_end = note.end
+            print(f"API: Procesando {midi_file} para la parte '{part_info['name']}'...")
+            
+            midi_full_path = os.path.join(base_path, midi_file)
+            part_score = music21.converter.parse(midi_full_path)
+            
+            part = music21.stream.Part()
+            part.id = part_info['name']
+            part.insert(0, part_info['instrument'])
+            part.insert(0, part_info['clef'])
+            
+            # Usar chordify para agrupar notas en acordes de forma robusta
+            chordified_part = part_score.chordify()
+            
+            # Insertar los elementos del stream chordificado en nuestra nueva parte
+            for element in chordified_part.flatten().notesAndRests:
+                 part.append(element)
+            
+            score.insert(0, part)
         
-        print(f"Se procesaron {len(processed_events)} eventos musicales (notas y silencios).")
-        return jsonify({"events": processed_events, "tempo": pm.estimate_tempo()})
+        # Organizar toda la partitura en compases al final
+        final_score = score.makeMeasures()
+
+        # Escribir el MusicXML final y enviarlo
+        fp = final_score.write('musicxml')
+        with open(fp, 'r', encoding='utf-8') as f:
+            musicxml_data = f.read()
+        os.remove(fp)
+
+        return Response(musicxml_data, mimetype='application/vnd.recordare.musicxml+xml')
+
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return str(e), 500
 
-# --- Punto de partida de la aplicación ---
+# El punto de partida de la aplicación
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)

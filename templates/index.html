@@ -22,16 +22,14 @@
     <hr class="my-4">
     <h2 class="mb-3">Canciones Procesadas</h2>
     {% for song in processed_songs %}
-        {# Cada canción tiene un ID único para que el JS la encuentre #}
-        <div class="card mb-4" id="song-card-{{ song.name }}">
+        <div class="card mb-4">
             <h5 class="card-header">{{ song.name }}</h5>
             <div class="card-body">
                 <div class="row">
                     {% for stem in song.stems %}
                     <div class="col-md-6 mb-3">
                         <h6 class="card-title">{{ stem.name }}</h6>
-                        {# ¡LA CLAVE! Añadimos un data-attribute con el nombre del stem #}
-                        <audio controls class="w-100 stem-audio-player" preload="metadata" data-stem-name="{{ stem.name | lower }}">
+                        <audio controls class="w-100" preload="metadata">
                             <source src="{{ stem.url }}" type="audio/wav">
                         </audio>
                         <a href="{{ stem.url }}" download class="btn btn-sm btn-outline-success mt-2">Descargar Audio</a>
@@ -42,154 +40,91 @@
                 {% if song.midi_url %}
                 <hr>
                 <h6 class="card-title">Transcripción Interactiva</h6>
-                
+                <p>Visualiza la partitura generada a partir del archivo MIDI.</p>
+
                 <div class="d-flex align-items-center gap-2 mt-2">
                     <a href="{{ song.midi_url }}" download class="btn btn-info">Descargar MIDI</a>
-                    <button class="btn btn-success play-score-btn" data-song-name="{{ song.name }}">▶️ Ver y Escuchar Partitura</button>
-                    <button class="btn btn-danger stop-score-btn" data-song-name="{{ song.name }}">⏹️ Detener</button>
-                    <span id="transport-time-{{ song.name }}" class="font-monospace">0:00</span>
+                    
+                    <button class="btn btn-success play-score-btn" 
+                            data-song-name="{{ song.name }}" 
+                            data-midi-url="{{ song.midi_url }}">
+                        ▶️ Ver Partitura
+                    </button>
+                    <button class="btn btn-danger stop-score-btn" data-song-name="{{ song.name }}">
+                        ⏹️ Ocultar
+                    </button>
                 </div>
 
-                <div id="score-{{ song.name }}" class="mt-3" style="background: white; padding: 10px; border-radius: 5px; overflow-x: auto;"></div>
+                <div id="score-{{ song.name }}" class="mt-3" style="background: white; padding: 10px; border-radius: 5px; overflow-x: auto; min-height: 50px;"></div>
                 {% endif %}
             </div>
         </div>
     {% endfor %}
 {% endif %}
 
-
 <script>
-// --- EL SCRIPT DE LA VICTORIA (SIMPLIFICADO Y ROBUSTO) ---
 document.addEventListener('DOMContentLoaded', () => {
-    const VF = Vex.Flow;
+    const OSMD = opensheetmusicdisplay.OpenSheetMusicDisplay;
     const songStates = {}; 
 
-    // La función de dibujo ya está bien, no necesita cambios
-    function drawScore(container, data) {
-        container.innerHTML = '';
-        const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
-        const context = renderer.getContext();
-        const staveWidth = 350;
-        const notes = data.notes;
-        if (!notes || notes.length === 0) {
-            container.innerHTML = '<p>No se encontraron notas válidas para dibujar.</p>';
-            return;
-        }
-        
-        const vexNotes = notes.map(noteEvent => 
-            new VF.StaveNote({ keys: noteEvent.keys, duration: noteEvent.duration || 'q' })
-        );
-        
-        const measures = [];
-        let currentMeasure = [];
-        for(let i = 0; i < vexNotes.length; i++){
-            currentMeasure.push(vexNotes[i]);
-            if(currentMeasure.length === 4 || i === vexNotes.length - 1){
-                measures.push(currentMeasure);
-                currentMeasure = [];
-            }
-        }
-        
-        const staveHeight = 120;
-        const stavesPerLine = 2;
-        renderer.resize(staveWidth * stavesPerLine + 50, staveHeight * (Math.ceil(measures.length / stavesPerLine) + 1));
-        
-        measures.forEach((measureNotes, i) => {
-            const x = 10 + (i % stavesPerLine) * staveWidth;
-            const y = 10 + Math.floor(i / stavesPerLine) * staveHeight;
-            const stave = new VF.Stave(x, y, staveWidth);
-            if (i === 0) stave.addClef("treble").addTimeSignature("4/4");
-            stave.setContext(context).draw();
-            VF.Formatter.FormatAndDraw(context, stave, measureNotes);
-        });
-    }
-
-    async function handlePlayClick(button) {
+    async function displayScore(button) {
         const songName = button.dataset.songName;
+        const scoreContainer = document.getElementById(`score-${songName}`);
         
-        // --- ¡LA SOLUCIÓN! BÚSQUEDA ROBUSTA DE LA URL ---
-        const songCard = document.getElementById(`song-card-${songName}`);
-        if (!songCard) {
-            console.error(`No se encontró la tarjeta para la canción: ${songName}`);
-            return;
-        }
-        // Buscamos el reproductor de audio con el nombre 'other' DENTRO de la tarjeta de la canción
-        const otherAudioElement = songCard.querySelector('audio[data-stem-name="other"]');
-        if (!otherAudioElement) {
-            alert("Error: No se encontró el reproductor de audio para la pista 'other'.");
-            return;
-        }
-        const audioUrl = otherAudioElement.querySelector('source').src;
-        // --------------------------------------------------
-        
-        await Tone.start();
-        
-        const currentState = songStates[songName];
-        if (currentState && Tone.Transport.state === 'started') {
-            Tone.Transport.pause();
-            button.innerText = '▶️ Reanudar';
+        if (songStates[songName] && songStates[songName].isRendered) {
+            scoreContainer.innerHTML = '';
+            songStates[songName].isRendered = false;
+            button.innerText = '▶️ Ver Partitura';
             return;
         }
 
         button.disabled = true;
-        button.innerText = 'Cargando...';
+        button.innerText = 'Cargando Partitura...';
+        scoreContainer.innerHTML = '<p>Generando partitura...</p>';
 
         try {
-            if (!currentState) {
-                const scoreContainer = document.getElementById(`score-${songName}`);
-                scoreContainer.innerHTML = '<p>Cargando datos y audio...</p>';
-                
-                const [response, player] = await Promise.all([
-                    fetch(`/api/midi-data/${songName}`),
-                    new Tone.Player(audioUrl).toDestination().load()
-                ]);
+            // ¡Llamamos a la nueva API!
+            const response = await fetch(`/api/musicxml/${songName}`);
+            if (!response.ok) throw new Error(`El servidor respondió con estado ${response.status}`);
+            
+            // Obtenemos la respuesta como texto (que será el XML)
+            const musicXmlString = await response.text();
 
-                const data = await response.json();
-                if (!response.ok || data.error) throw new Error(data.error);
-                
-                drawScore(scoreContainer, data.notes);
-                songStates[songName] = { player, data };
-            }
+            const osmd = new OSMD(scoreContainer, { autoResize: true, drawTitle: false });
 
-            songStates[songName].player.sync().start(0, Tone.Transport.seconds);
-            Tone.Transport.start();
-            button.innerText = '⏸️ Pausa';
+            // Cargamos el string de MusicXML y renderizamos
+            await osmd.load(musicXmlString);
+            osmd.render();
+            
+            console.log(`✅ Partitura para "${songName}" renderizada con éxito.`);
+            songStates[songName] = { osmd: osmd, isRendered: true };
 
         } catch (error) {
-            console.error("Error al iniciar el playback:", error);
-            document.getElementById(`score-${songName}`).innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            console.error(`Error al renderizar con OSMD para "${songName}":`, error);
+            scoreContainer.innerHTML = `<p class="text-danger">No se pudo generar la partitura. Error: ${error.message}</p>`;
         } finally {
             button.disabled = false;
+            button.innerText = 'Ocultar Partitura';
         }
     }
     
+    // Usamos delegación de eventos para los botones
     document.body.addEventListener('click', (event) => {
         if (event.target.matches('.play-score-btn')) {
-            handlePlayClick(event.target);
+            displayScore(event.target);
         }
         
         if (event.target.matches('.stop-score-btn')) {
             const songName = event.target.dataset.songName;
-            const currentState = songStates[songName];
-            if (currentState) {
-                Tone.Transport.stop();
-                if(currentState.player) currentState.player.stop();
-                event.target.closest('.d-flex').querySelector('.play-score-btn').innerText = '▶️ Ver y Escuchar Partitura';
-            }
+            const scoreContainer = document.getElementById(`score-${songName}`);
+            if(scoreContainer) scoreContainer.innerHTML = '';
+            
+            if(songStates[songName]) songStates[songName].isRendered = false;
+            
+            const playBtn = event.target.closest('.d-flex').querySelector('.play-score-btn');
+            if (playBtn) playBtn.innerText = '▶️ Ver Partitura';
         }
     });
-
-    setInterval(() => {
-        document.querySelectorAll('.play-score-btn').forEach(btn => {
-            const songName = btn.dataset.songName;
-            const timeEl = document.getElementById(`transport-time-${songName}`);
-            if (timeEl && Tone.Transport.state === 'started') {
-                 const minutes = Math.floor(Tone.Transport.seconds / 60);
-                 const seconds = (Tone.Transport.seconds % 60).toFixed(0);
-                 timeEl.innerText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            }
-        });
-    }, 250);
 });
 </script>
 {% endblock %}

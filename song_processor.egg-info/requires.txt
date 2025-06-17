@@ -4,3 +4,6 @@ demucs
 basic-pitch
 numpy==1.26.4
 pretty_midi
+music21
+librosa
+scikit-learn
