@@ -190,9 +190,13 @@ def process_song(upload_path, stems_folder, progress_callback=None):
                 print(f"TASK [Main]: Stderr: {e.stderr}")
             raise
 
-        # 2. Definir rutas de origen y destino
+        # 2. Definir rutas de origen y destino con separadores correctos
         demucs_default_output = os.path.join('separated', model, song_name_without_ext)
         final_output_dir = os.path.join(stems_folder, song_name_without_ext, model)
+        
+        # Normalizar rutas para el entorno actual
+        demucs_default_output = os.path.normpath(demucs_default_output)
+        final_output_dir = os.path.normpath(final_output_dir)
         
         # 3. Validar que Demucs generó resultados
         if not os.path.exists(demucs_default_output):
@@ -234,7 +238,7 @@ def process_song(upload_path, stems_folder, progress_callback=None):
         midi_files = []
 
         for i, track_name in enumerate(tracks_to_transcribe):
-            audio_track_path = os.path.join(output_dir, f"{track_name}.wav")
+            audio_track_path = os.path.normpath(os.path.join(output_dir, f"{track_name}.wav"))
             if os.path.exists(audio_track_path):
                 # Verificar que el archivo no está vacío
                 if os.path.getsize(audio_track_path) == 0:
@@ -252,6 +256,7 @@ def process_song(upload_path, stems_folder, progress_callback=None):
                     
                     try:
                         from basic_pitch.inference import predict_and_save
+                        from basic_pitch import ICASSP_2022_MODEL_PATH
                         import librosa
                         
                         # Verificar que el archivo de audio es válido
@@ -271,15 +276,15 @@ def process_song(upload_path, stems_folder, progress_callback=None):
                             raise RuntimeError(f"Error cargando audio {audio_track_path}: {audio_error}")
                         
                         # Ejecutar la transcripción usando la API de basic-pitch
-                        # Usar modelo por defecto de basic-pitch
+                        # Usar modelo por defecto (se descarga automáticamente)
                         predict_and_save(
                             audio_path_list=[audio_track_path],
                             output_directory=output_dir,
+                            model_or_model_path=ICASSP_2022_MODEL_PATH,
                             save_midi=True,
                             sonify_midi=False,
                             save_model_outputs=False,
-                            save_notes=False,
-                            model_or_model_path=None  # Usar modelo por defecto
+                            save_notes=False
                         )
                         
                         print(f"TASK [Main]: basic-pitch API ejecutado exitosamente para {track_name}")
@@ -328,8 +333,8 @@ def process_song(upload_path, stems_folder, progress_callback=None):
         update_progress(f"Completadas {successful_transcriptions} transcripciones", 90)
         
         # 6. Procesar clustering de instrumentos en 'other'
-        other_audio_path = os.path.join(output_dir, "other.wav")
-        other_midi_path = os.path.join(output_dir, "other_basic_pitch.mid")
+        other_audio_path = os.path.normpath(os.path.join(output_dir, "other.wav"))
+        other_midi_path = os.path.normpath(os.path.join(output_dir, "other_basic_pitch.mid"))
         
         if os.path.exists(other_audio_path) and os.path.exists(other_midi_path):
             # Verificar que ambos archivos tienen contenido válido
