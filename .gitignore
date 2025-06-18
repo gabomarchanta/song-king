@@ -199,6 +199,19 @@ separated/
 *.m4a
 *.ogg
 
+# Archivos temporales y de prueba
+test_format*
+cursor_revisar_proyecto_y_subir_cambios.md
+key
+key.pub
+*.musicxml
+*.svg
+*.pdf
+
+# Archivos cache de music21
+*.p.gz
+tmp*.musicxml
+
 # Temporary files
 *.tmp
 *.temp
