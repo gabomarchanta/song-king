@@ -255,68 +255,29 @@
             document.querySelector(`[onclick="showTab('${tabName}')"]`).classList.add('active');
         }
 
-        // Debug: verificar que el formulario existe
+        // Upload form handling
         const uploadForm = document.getElementById('uploadForm');
-        console.log('🔧 Formulario encontrado:', uploadForm);
         
-        if (!uploadForm) {
-            console.error('❌ ERROR: No se encontró el formulario uploadForm');
-            alert('ERROR: Formulario no encontrado');
-        } else {
-            console.log('✅ Agregando event listener al formulario...');
-            
-            // Upload form handling - VERSIÓN SIMPLIFICADA
+        if (uploadForm) {
             uploadForm.addEventListener('submit', function(e) {
-                console.log('🚨 ¡EVENT LISTENER EJECUTADO!');
-                
-                // SIEMPRE prevenir el envío automático primero
                 e.preventDefault();
                 
-                console.log('🟡 Event listener del formulario ejecutado');
-                
                 const fileInput = document.getElementById('fileInput');
-                console.log('🟡 FileInput files:', fileInput.files);
-                console.log('🟡 Files length:', fileInput.files ? fileInput.files.length : 'null');
                 
-                // Verificar que hay un archivo seleccionado
                 if (!fileInput.files || fileInput.files.length === 0) {
-                    console.log('❌ No hay archivo seleccionado');
                     alert('Por favor selecciona un archivo de audio');
                     return false;
                 }
                 
                 const fileName = fileInput.files[0].name;
-                const fileSize = fileInput.files[0].size;
-                console.log('✅ Archivo válido:', fileName, fileSize, 'bytes');
+                showProcessingAlert(fileName);
                 
-                // AGREGAR CONFIRMACIÓN VISUAL SIMPLE
-                alert(`¡JavaScript FUNCIONANDO! 
-                
-Archivo: ${fileName} 
-Tamaño: ${fileSize} bytes
-
-Revisar logs y hacer clic OK para continuar.`);
-                
-                console.log('📤 Enviando formulario al servidor...');
-                
-                // Ahora SÍ enviar el formulario
+                // Enviar el formulario
                 this.submit();
             });
-            
-            console.log('✅ Event listener agregado correctamente');
         }
 
-        // Debug: listener para cuando se selecciona archivo
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            console.log('📁 Archivo seleccionado:');
-            console.log('  - files:', this.files);
-            console.log('  - files.length:', this.files ? this.files.length : 'null');
-            if (this.files && this.files.length > 0) {
-                console.log('  - nombre:', this.files[0].name);
-                console.log('  - tamaño:', this.files[0].size, 'bytes');
-                console.log('  - tipo:', this.files[0].type);
-            }
-        });
+
 
         function showProcessingAlert(fileName) {
             document.getElementById('processingTitle').textContent = `Procesando ${fileName}`;
