@@ -3,7 +3,11 @@
 {% block title %}Partitura Interactiva - {{ song_name }} - {{ instrument }}{% endblock %}
 
 {% block head %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <script src="/static/js/vexflow.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.5/build/opensheetmusicdisplay.min.js"></script>
 <style>
     body {
         font-family: Arial, sans-serif;
@@ -121,6 +125,21 @@
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         z-index: 1000;
     }
+    
+    .loading-spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #ffa500;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
 </style>
 {% endblock %}
 
@@ -148,12 +167,23 @@
             <div class="time-display" id="timeDisplay">Tiempo: 0:00 / 0:00</div>
         </div>
         
+        <!-- Audio element para reproducción real -->
+        <audio id="audioPlayer" preload="auto" style="display: none;">
+            <source id="audioSource" type="audio/wav">
+            Tu navegador no soporta audio HTML5.
+        </audio>
+        
+        <div class="score-display" id="score">
+            <h3>🎼 Partitura Musical</h3>
+            <div id="scoreContainer">
+                <p>Cargando partitura...</p>
+            </div>
+        </div>
+        
         <div class="note-info" id="noteInfo">
             <h3>📝 Información de la partitura</h3>
             <p>Cargando datos...</p>
         </div>
-        
-        <div class="score-display" id="score"></div>
     </div>
 </div>
 
@@ -171,20 +201,47 @@
                 
                 const notesData = data.notes;
                 const totalDuration = data.total_duration;
+                const audioFile = data.audio_file;
+                
+                // Guardar datos de notas para sincronización con partitura
+                currentNotesData = notesData;
+                
+                // Configurar archivo de audio
+                document.getElementById('audioSource').src = audioFile;
+                        const audioPlayer = document.getElementById('audioPlayer');
+        globalAudioPlayer = audioPlayer; // Guardar referencia global para sincronización
+        audioPlayer.load();
                 
                 // Mostrar información
                 document.getElementById('noteInfo').innerHTML = `
                     <h3>📝 Información de la partitura</h3>
                     <p><strong>Total de notas:</strong> ${notesData.length}</p>
-                    <p><strong>Duración total:</strong> ${formatTime(totalDuration)}</p>
+                    <p><strong>Duración total (MIDI):</strong> ${formatTime(totalDuration)}</p>
                     <p><strong>Instrumento:</strong> {{ instrument.title() }}</p>
+                    <p><strong>Archivo de audio:</strong> ${audioFile}</p>
                 `;
                 
-                // Inicializar controles de reproducción
-                initPlaybackControls(notesData, totalDuration);
+                // Esperar a que el audio se cargue para obtener duración real
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    const realDuration = audioPlayer.duration;
+                    console.log('Duración real del audio:', realDuration);
+                    
+                    // Actualizar información con duración real
+                    document.getElementById('noteInfo').innerHTML = `
+                        <h3>📝 Información de la partitura</h3>
+                        <p><strong>Total de notas:</strong> ${notesData.length}</p>
+                        <p><strong>Duración MIDI:</strong> ${formatTime(totalDuration)}</p>
+                        <p><strong>Duración real:</strong> ${formatTime(realDuration)}</p>
+                        <p><strong>Instrumento:</strong> {{ instrument.title() }}</p>
+                    `;
+                    
+                    // Inicializar controles con duración real
+                    initPlaybackControls(notesData, realDuration, audioPlayer);
+                });
                 
-                // Renderizar partitura visual
-                renderScore(notesData);
+                // Cargar partitura desde MuseScore
+                console.log('Cargando partitura generada por MuseScore...');
+                loadScoreImage('{{ song_name }}', '{{ instrument }}');
             })
             .catch(error => {
                 console.error('Error cargando datos:', error);
@@ -199,7 +256,7 @@
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
     
-    function initPlaybackControls(notesData, totalDuration) {
+    function initPlaybackControls(notesData, totalDuration, audioPlayer) {
         const playBtn = document.getElementById('playBtn');
         const pauseBtn = document.getElementById('pauseBtn');
         const stopBtn = document.getElementById('stopBtn');
@@ -207,118 +264,897 @@
         const progressBar = document.getElementById('progressBar');
         const timeDisplay = document.getElementById('timeDisplay');
         
-        let currentTime = 0;
-        let isPlaying = false;
         let playbackInterval;
         
+        // Inicializar display de tiempo
+        timeDisplay.textContent = `Tiempo: 0:00 / ${formatTime(totalDuration)}`;
+        
         playBtn.addEventListener('click', () => {
-            if (!isPlaying) {
-                isPlaying = true;
+            audioPlayer.play().then(() => {
                 playBtn.disabled = true;
                 pauseBtn.disabled = false;
                 stopBtn.disabled = false;
                 
+                // Sincronizar progreso con audio real
                 playbackInterval = setInterval(() => {
-                    currentTime += 0.1;
+                    const currentTime = audioPlayer.currentTime;
                     const progress = (currentTime / totalDuration) * 100;
                     progressBar.style.width = `${Math.min(progress, 100)}%`;
                     timeDisplay.textContent = `Tiempo: ${formatTime(currentTime)} / ${formatTime(totalDuration)}`;
                     
-                    // Resaltar nota actual
-                    highlightCurrentNote(currentTime, notesData);
-                    
-                    if (currentTime >= totalDuration) {
-                        stopPlayback();
-                    }
+                    // Sincronizar partitura con audio
+                    syncSheetMusicWithAudio(currentTime);
                 }, 100);
-            }
+            }).catch(error => {
+                console.error('Error reproduciendo audio:', error);
+                alert('Error al reproducir el audio. Verifica que el archivo existe.');
+            });
         });
         
         pauseBtn.addEventListener('click', () => {
-            if (isPlaying) {
-                isPlaying = false;
-                playBtn.disabled = false;
-                pauseBtn.disabled = true;
-                clearInterval(playbackInterval);
-            }
-        });
-        
-        stopBtn.addEventListener('click', stopPlayback);
-        
-        resetBtn.addEventListener('click', () => {
-            stopPlayback();
-            currentTime = 0;
-            progressBar.style.width = '0%';
-            timeDisplay.textContent = `Tiempo: 0:00 / ${formatTime(totalDuration)}`;
+            audioPlayer.pause();
+            playBtn.disabled = false;
+            pauseBtn.disabled = true;
+            clearInterval(playbackInterval);
             clearNoteHighlights();
         });
         
+        stopBtn.addEventListener('click', () => {
+            stopPlayback();
+        });
+        
+        resetBtn.addEventListener('click', () => {
+            stopPlayback();
+            audioPlayer.currentTime = 0;
+            progressBar.style.width = '0%';
+            timeDisplay.textContent = `Tiempo: 0:00 / ${formatTime(totalDuration)}`;
+            clearNoteHighlights();
+            // Reiniciar cursor de partitura
+            if (currentOSMD && currentOSMD.cursor) {
+                currentOSMD.cursor.reset();
+                currentOSMD.render();
+            }
+        });
+        
+        // Event listeners del audio
+        audioPlayer.addEventListener('ended', () => {
+            stopPlayback();
+        });
+        
+        audioPlayer.addEventListener('error', (e) => {
+            console.error('Error en el audio:', e);
+            alert('Error cargando el archivo de audio');
+            stopPlayback();
+        });
+        
         function stopPlayback() {
-            isPlaying = false;
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
             playBtn.disabled = false;
             pauseBtn.disabled = true;
             stopBtn.disabled = true;
             clearInterval(playbackInterval);
+            clearNoteHighlights();
+            // Reiniciar cursor de partitura
+            if (currentOSMD && currentOSMD.cursor) {
+                currentOSMD.cursor.reset();
+                currentOSMD.render();
+            }
         }
     }
     
-    function highlightCurrentNote(currentTime, notesData) {
+        // Sincronización CORRECTA según documentación oficial de OSMD
+    function syncSheetMusicWithAudio(currentTime) {
+        console.log(`🎯 [SYNC] Tiempo de audio: ${currentTime.toFixed(2)}s`);
+        
+        // Verificar si la sincronización está habilitada
+        const enableSyncCheckbox = document.getElementById('enableSync');
+        if (!enableSyncCheckbox || !enableSyncCheckbox.checked) {
+            return;
+        }
+        
+        // Verificar instancia OSMD
+        if (!currentOSMD || !currentOSMD.cursor || !currentOSMD.cursor.Iterator) {
+            console.log('⚠️ [SYNC] OSMD no disponible');
+            return;
+        }
+        
+        try {
+            // Extraer tabla de notas con tiempos exactos (según documentación oficial OSMD)
+            if (!window.osmdNoteTimings || window.osmdNoteTimings.length === 0) {
+                console.log('📋 [SYNC] Extrayendo tabla de tiempos de notas...');
+                extractNoteTimingsFromOSMD();
+                return; // Esperar a que se complete la extracción
+            }
+            
+            // Buscar la nota actual basada en tiempo de audio
+            const currentNoteData = findCurrentNoteByTime(currentTime, window.osmdNoteTimings);
+            
+            if (currentNoteData) {
+                console.log(`🎵 [SYNC] Nota encontrada: ${currentNoteData.note} a tiempo ${currentTime.toFixed(2)}s (OSMD: ${currentNoteData.osmdTime.toFixed(3)})`);
+                
+                // Mover cursor OSMD a la posición exacta de la nota
+                moveOSMDCursorToTime(currentNoteData.osmdTime);
+                
+                // Resaltar nota en SVG también
+                highlightNoteAtTime(currentNoteData);
+            } else {
+                console.log(`🎯 [SYNC] No hay nota activa en ${currentTime.toFixed(2)}s`);
+            }
+            
+        } catch (error) {
+            console.log(`❌ [SYNC ERROR] ${error.message}`);
+        }
+    }
+    
+    // Extraer tiempos de notas según la documentación oficial de OSMD
+    function extractNoteTimingsFromOSMD() {
+        if (!currentOSMD || !currentOSMD.cursor) return;
+        
+        const allNotes = [];
+        const iterator = currentOSMD.cursor.Iterator;
+        const bpm = 120; // BPM estimado, mejorar en el futuro
+        
+        console.log('📋 [TIMING] Iniciando extracción de tiempos según API oficial OSMD...');
+        
+        // Resetear cursor para recorrer desde el inicio
+        currentOSMD.cursor.reset();
+        
+        while (!iterator.EndReached) {
+            const voices = iterator.CurrentVoiceEntries;
+            
+            for (let i = 0; i < voices.length; i++) {
+                const voice = voices[i];
+                const notes = voice.Notes;
+                
+                for (let j = 0; j < notes.length; j++) {
+                    const note = notes[j];
+                    
+                    // Solo notas que suenan (no silencios ni descansos)
+                    if (note != null && note.halfTone != 0 && !note.isRest()) {
+                        const osmdTime = iterator.currentTimeStamp.RealValue;
+                        const realTime = osmdTime * 4 * 60 / bpm; // Conversión oficial OSMD → segundos
+                        
+                        allNotes.push({
+                            note: note.halfTone + 12,
+                            osmdTime: osmdTime,
+                            realTime: realTime,
+                            noteObj: note,
+                            voice: voice,
+                            measure: iterator.CurrentMeasureIndex || 0
+                        });
+                    }
+                }
+            }
+            
+            iterator.moveToNext();
+        }
+        
+        // Guardar tabla de tiempos globalmente
+        window.osmdNoteTimings = allNotes.sort((a, b) => a.realTime - b.realTime);
+        
+        console.log(`✅ [TIMING] Extraídas ${allNotes.length} notas con tiempos precisos`);
+        console.log('📊 [TIMING] Primeras 5 notas:', allNotes.slice(0, 5).map(n => `${n.realTime.toFixed(2)}s`));
+        
+        // Resetear cursor al inicio
+        currentOSMD.cursor.reset();
+    }
+    
+    // Buscar nota actual por tiempo de audio
+    function findCurrentNoteByTime(audioTime, noteTimings) {
+        if (!noteTimings || noteTimings.length === 0) return null;
+        
+        // Buscar la nota que corresponde al tiempo de audio actual
+        for (let i = 0; i < noteTimings.length; i++) {
+            const note = noteTimings[i];
+            const nextNote = noteTimings[i + 1];
+            
+            const noteStart = note.realTime;
+            const noteEnd = nextNote ? nextNote.realTime : audioTime + 1;
+            
+            if (audioTime >= noteStart && audioTime < noteEnd) {
+                return note;
+            }
+        }
+        
+        return null;
+    }
+    
+    // Mover cursor OSMD a tiempo específico
+    function moveOSMDCursorToTime(targetOsmdTime) {
+        if (!currentOSMD || !currentOSMD.cursor) return;
+        
+        const iterator = currentOSMD.cursor.Iterator;
+        const currentPos = iterator.currentTimeStamp ? iterator.currentTimeStamp.RealValue : 0;
+        
+        // Solo mover si hay diferencia significativa
+        if (Math.abs(currentPos - targetOsmdTime) < 0.01) return;
+        
+        console.log(`🔄 [CURSOR] Moviendo de ${currentPos.toFixed(3)} a ${targetOsmdTime.toFixed(3)}`);
+        
+        // Resetear cursor
+        currentOSMD.cursor.reset();
+        
+        // Navegar hasta el tiempo objetivo
+        let steps = 0;
+        while (!iterator.EndReached && 
+               iterator.currentTimeStamp.RealValue < targetOsmdTime && 
+               steps < 500) {
+            iterator.moveToNext();
+            steps++;
+        }
+        
+        // Actualizar cursor visual
+        currentOSMD.cursor.update();
+        currentOSMD.cursor.show();
+        currentOSMD.render();
+        
+        console.log(`✅ [CURSOR] Cursor movido en ${steps} pasos a ${iterator.currentTimeStamp.RealValue.toFixed(3)}`);
+    }
+    
+    // Resaltar nota específica
+    function highlightNoteAtTime(noteData) {
         // Limpiar highlights anteriores
         clearNoteHighlights();
         
-        // Encontrar nota actual
-        const currentNote = notesData.find(note => 
-            currentTime >= note.start_time && currentTime <= note.end_time
-        );
-        
-        if (currentNote) {
-            // Resaltar nota en la partitura visual
-            const noteElements = document.querySelectorAll(`[data-note="${currentNote.note}"]`);
-            noteElements.forEach(el => el.classList.add('note-highlight'));
+        // Usar GNotesUnderCursor() según documentación OSMD
+        try {
+            const graphicalNotes = currentOSMD.cursor.GNotesUnderCursor();
+            if (graphicalNotes && graphicalNotes.length > 0) {
+                graphicalNotes.forEach(gNote => {
+                    const svgElement = gNote.getSVGGElement();
+                    if (svgElement) {
+                        svgElement.style.fill = '#ff1744';
+                        svgElement.style.stroke = '#ff1744';
+                        svgElement.style.filter = 'drop-shadow(0 0 8px #ff1744)';
+                        svgElement.classList.add('note-highlight-sync');
+                        
+                        // Limpiar después de 400ms
+                        setTimeout(() => {
+                            svgElement.style.fill = '';
+                            svgElement.style.stroke = '';
+                            svgElement.style.filter = '';
+                            svgElement.classList.remove('note-highlight-sync');
+                        }, 400);
+                    }
+                });
+                
+                console.log(`🎨 [HIGHLIGHT] ${graphicalNotes.length} notas resaltadas usando API OSMD`);
+            }
+        } catch (error) {
+            console.log(`⚠️ [HIGHLIGHT] Error con API OSMD, usando fallback: ${error.message}`);
+            // Fallback al resaltado SVG genérico
+            const timeProgressRatio = noteData.realTime / (globalAudioPlayer?.duration || 323);
+            highlightCurrentNoteInSVGByTime(null, timeProgressRatio);
         }
+    }
+    
+    // Nueva función para cargar datos de notas MIDI para sincronización
+    function loadNotesDataForSync() {
+        console.log('🎯 [SYNC DEBUG] Cargando datos de notas desde endpoint...');
+        
+        const songName = '{{ song_name }}';
+        const instrument = '{{ instrument }}';
+        const notesEndpoint = `/api/score/${songName}/${instrument}/render`;
+        
+        fetch(notesEndpoint)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.notes && Array.isArray(data.notes)) {
+                    currentNotesData = data.notes;
+                    console.log(`🎯 [SYNC DEBUG] Datos de notas cargados: ${currentNotesData.length} notas`);
+                    console.log('🎯 [SYNC DEBUG] Primeras 3 notas:', currentNotesData.slice(0, 3));
+                } else {
+                    console.log('🎯 [SYNC DEBUG] Respuesta no contiene datos de notas válidos:', data);
+                }
+            })
+            .catch(error => {
+                console.log('🎯 [SYNC DEBUG] Error cargando datos de notas:', error.message);
+            });
+    }
+    
+    // Función mejorada de resaltado SVG con detección inteligente de notas
+    function highlightCurrentNoteInSVGByTime(currentNote, timeProgress) {
+        console.log(`🎵 [HIGHLIGHT] Resaltando en progreso: ${(timeProgress * 100).toFixed(1)}%`);
+        
+        // Limpiar highlights anteriores
+        clearNoteHighlights();
+        
+        // Buscar en todos los contenedores de partitura
+        const containers = ['osmdContainer', 'osmdContainerDynamic'];
+        let totalNotesHighlighted = 0;
+        
+        containers.forEach(containerId => {
+            const container = document.getElementById(containerId);
+            
+            if (container) {
+                const svgElements = container.querySelectorAll('svg');
+                
+                svgElements.forEach((svg, svgIndex) => {
+                    // Selectores más específicos para notas musicales
+                    const noteHeads = svg.querySelectorAll('ellipse[fill="#000000"], ellipse[fill="black"], circle[fill="#000000"], circle[fill="black"]');
+                    const paths = svg.querySelectorAll('path[fill="#000000"], path[fill="black"]');
+                    const allNoteElements = [...noteHeads, ...paths];
+                    
+                    if (allNoteElements.length > 0) {
+                                                 // Filtrar elementos que parecen notas (tamaño apropiado) - con manejo de errores
+                         const likelyNotes = allNoteElements.filter(el => {
+                             try {
+                                 const bbox = el.getBBox ? el.getBBox() : { width: 10, height: 10 };
+                                 return bbox.width > 2 && bbox.width < 50 && bbox.height > 2 && bbox.height < 50;
+                             } catch (e) {
+                                 // Si getBBox() falla, asumir que es una nota válida
+                                 return true;
+                             }
+                         });
+                        
+                        if (likelyNotes.length > 0) {
+                            // Calcular qué grupo de notas resaltar (para acordes/multi-notas)
+                            const notesPerSection = Math.max(1, Math.floor(likelyNotes.length / 20)); // Dividir en ~20 secciones
+                            const sectionIndex = Math.floor(timeProgress * 20);
+                            const startIndex = Math.min(sectionIndex * notesPerSection, likelyNotes.length - notesPerSection);
+                            const endIndex = Math.min(startIndex + notesPerSection, likelyNotes.length);
+                            
+                            console.log(`🎵 [HIGHLIGHT] SVG ${svgIndex}: Resaltando notas ${startIndex}-${endIndex} de ${likelyNotes.length} (sección ${sectionIndex}/20)`);
+                            
+                            // Resaltar grupo de notas
+                            for (let i = startIndex; i < endIndex; i++) {
+                                const note = likelyNotes[i];
+                                note.style.fill = '#ff1744';
+                                note.style.stroke = '#ff1744';
+                                note.style.strokeWidth = '2';
+                                note.style.filter = 'drop-shadow(0 0 6px #ff1744)';
+                                note.classList.add('note-highlight-sync');
+                                totalNotesHighlighted++;
+                            }
+                            
+                            // Limpiar resaltado después de 300ms
+                            setTimeout(() => {
+                                for (let i = startIndex; i < endIndex; i++) {
+                                    const note = likelyNotes[i];
+                                    note.style.fill = '';
+                                    note.style.stroke = '';
+                                    note.style.strokeWidth = '';
+                                    note.style.filter = '';
+                                    note.classList.remove('note-highlight-sync');
+                                }
+                            }, 300);
+                        }
+                    }
+                });
+            }
+        });
+        
+        if (totalNotesHighlighted > 0) {
+            console.log(`✅ [HIGHLIGHT] ${totalNotesHighlighted} notas resaltadas`);
+        } else {
+            console.log(`⚠️ [HIGHLIGHT] No se encontraron notas para resaltar`);
+        }
+    }
+    
+    // Función auxiliar para resaltar en SVG (fallback) - Mejorada para notas individuales
+    function highlightCurrentNoteInSVG(currentNote) {
+        // Limpiar highlights anteriores
+        clearNoteHighlights();
+        
+        // Buscar en todos los contenedores de partitura
+        const containers = ['osmdContainer', 'osmdContainerDynamic'];
+        
+        containers.forEach(containerId => {
+            const container = document.getElementById(containerId);
+            if (container) {
+                const svgElements = container.querySelectorAll('svg');
+                svgElements.forEach(svg => {
+                    // Buscar elementos específicos de notas (cabezas de nota)
+                    const noteHeads = svg.querySelectorAll('ellipse, circle, path[d*="m"]');
+                    const stems = svg.querySelectorAll('path[stroke-width]');
+                    
+                    // Calcular qué nota resaltar basado en el tiempo actual
+                    const totalElements = noteHeads.length;
+                    if (totalElements > 0) {
+                        // Usar el tiempo de la nota para determinar qué elemento resaltar
+                        const noteProgress = (currentNote.start_time % 10) / 10; // Ciclo cada 10 segundos
+                        const targetIndex = Math.floor(noteProgress * totalElements);
+                        
+                        // Resaltar la cabeza de nota específica
+                        const targetNoteHead = noteHeads[targetIndex];
+                        if (targetNoteHead) {
+                            // Estilo de resaltado más sutil y específico
+                            targetNoteHead.style.fill = '#ff1744';
+                            targetNoteHead.style.stroke = '#ff1744';
+                            targetNoteHead.style.strokeWidth = '3';
+                            targetNoteHead.style.filter = 'drop-shadow(0 0 8px #ff1744)';
+                            targetNoteHead.classList.add('note-highlight-sync');
+                            
+                            console.log(`🎵 [HIGHLIGHT] Resaltando nota ${targetIndex}/${totalElements} (${currentNote.note})`);
+                            
+                            // Buscar y resaltar el stem asociado si existe
+                            const associatedStem = stems[targetIndex];
+                            if (associatedStem) {
+                                associatedStem.style.stroke = '#ff1744';
+                                associatedStem.style.strokeWidth = '4';
+                                associatedStem.classList.add('note-highlight-sync');
+                            }
+                            
+                            // Remover el resaltado después de un tiempo más corto para mejor feedback
+                            setTimeout(() => {
+                                targetNoteHead.style.fill = '';
+                                targetNoteHead.style.stroke = '';
+                                targetNoteHead.style.strokeWidth = '';
+                                targetNoteHead.style.filter = '';
+                                targetNoteHead.classList.remove('note-highlight-sync');
+                                
+                                if (associatedStem) {
+                                    associatedStem.style.stroke = '';
+                                    associatedStem.style.strokeWidth = '';
+                                    associatedStem.classList.remove('note-highlight-sync');
+                                }
+                            }, 300); // Más rápido para mejor fluidez
+                        }
+                    }
+                });
+            }
+        });
     }
     
     function clearNoteHighlights() {
-        document.querySelectorAll('.note-highlight').forEach(el => {
-            el.classList.remove('note-highlight');
+        // Limpiar highlights en todos los contenedores
+        const containers = ['osmdContainer', 'osmdContainerDynamic'];
+        
+        containers.forEach(containerId => {
+            const container = document.getElementById(containerId);
+            if (container) {
+                const highlightedElements = container.querySelectorAll('.note-highlight-sync');
+                highlightedElements.forEach(el => {
+                    el.classList.remove('note-highlight-sync');
+                    el.style.fill = '';
+                    el.style.stroke = '';
+                    el.style.strokeWidth = '';
+                });
+            }
         });
     }
     
-    function renderScore(notesData) {
-        const scoreDiv = document.getElementById('score');
+    function loadScoreImage(songName, instrument) {
+        const scoreContainer = document.getElementById('scoreContainer');
         
-        // Usar VexFlow para renderizar la partitura
-        const { Factory, EasyScore, System } = Vex.Flow;
+        // Mapeo de instrumentos a archivos MIDI
+        const instrumentFiles = {
+            'vocals': 'vocals_basic_pitch',
+            'bass': 'bass_basic_pitch',
+            'guitar': 'other_cluster_0_guitar',
+            'piano': 'other_cluster_1_piano',
+            'synth': 'other_cluster_2_synth'
+        };
         
-        // Crear canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = 800;
-        canvas.height = 200;
-        scoreDiv.appendChild(canvas);
+        const baseFileName = instrumentFiles[instrument];
+        if (!baseFileName) {
+            scoreContainer.innerHTML = '<p>❌ Instrumento no válido</p>';
+            return;
+        }
         
-        const factory = new Factory({
-            renderer: { elementId: canvas, width: 800, height: 200 }
-        });
+        // Intentar cargar diferentes formatos de partitura
+        const formats = ['svg', 'png', 'musicxml'];
         
-        const score = factory.EasyScore();
-        const system = factory.System();
+        // Función para intentar cargar un formato específico
+        function tryLoadFormat(formatIndex = 0) {
+            if (formatIndex >= formats.length) {
+                scoreContainer.innerHTML = `
+                    <p>❌ No se encontraron partituras generadas para ${instrument}</p>
+                    <p>💡 La partitura se generará automáticamente en el próximo procesamiento</p>
+                    <details style="margin-top: 15px;">
+                        <summary>🔧 Información técnica</summary>
+                        <p>Archivos buscados:</p>
+                        <ul>
+                            ${formats.map(fmt => `<li>/static/stems/${songName}/htdemucs/${baseFileName}_score.${fmt}</li>`).join('')}
+                        </ul>
+                    </details>
+                `;
+                return;
+            }
+            
+            const currentFormat = formats[formatIndex];
+            const scorePath = `/static/stems/${songName}/htdemucs/${baseFileName}_score.${currentFormat}`;
+            
+            console.log(`Intentando cargar partitura: ${scorePath}`);
+            
+            if (currentFormat === 'svg') {
+                // Cargar SVG directamente
+                fetch(scorePath)
+                    .then(response => {
+                        if (response.ok) return response.text();
+                        throw new Error(`HTTP ${response.status}`);
+                    })
+                    .then(svgContent => {
+                        scoreContainer.innerHTML = `
+                            <div style="text-align: center; margin: 20px 0; max-width: 100%; overflow-x: auto;">
+                                ${svgContent}
+                            </div>
+                            <p style="color: #666; text-align: center; margin-top: 15px;">
+                                ✅ Partitura generada por MuseScore - Formato SVG de alta calidad
+                            </p>
+                        `;
+                    })
+                    .catch(error => {
+                        console.log(`No se pudo cargar SVG: ${error.message}`);
+                        tryLoadFormat(formatIndex + 1);
+                    });
+                    
+            } else if (currentFormat === 'png') {
+                // Cargar PNG como imagen
+                const img = new Image();
+                img.onload = function() {
+                    scoreContainer.innerHTML = `
+                        <div style="text-align: center; margin: 20px 0;">
+                            <img src="${scorePath}" alt="Partitura de ${instrument}" 
+                                 style="max-width: 100%; height: auto; border: 1px solid #ddd; 
+                                        border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                        </div>
+                        <p style="color: #666; text-align: center; margin-top: 15px;">
+                            ✅ Partitura generada por MuseScore - Formato PNG
+                        </p>
+                    `;
+                };
+                img.onerror = function() {
+                    console.log(`No se pudo cargar PNG: ${scorePath}`);
+                    tryLoadFormat(formatIndex + 1);
+                };
+                img.src = scorePath;
+                
+            } else if (currentFormat === 'musicxml') {
+                        console.log('🎯 DEBUG: Entrando en bloque MusicXML - versión actualizada v2');
+        console.log(`🎯 DEBUG: scorePath = ${scorePath}`);
+                // Intentar cargar el archivo MusicXML estático primero para verificar si es válido
+                fetch(scorePath)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.text();
+                        } else {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                    })
+                    .then(xmlContent => {
+                        console.log(`📁 MusicXML estático cargado: ${xmlContent.length} caracteres`);
+                        // Verificar que sea un XML válido
+                        if (xmlContent.trim().length > 100 && xmlContent.includes('<?xml') && xmlContent.includes('score-partwise')) {
+                            console.log('✅ MusicXML estático válido encontrado');
+                            // Crear un blob para descarga
+                            const blob = new Blob([xmlContent], { type: 'application/vnd.recordare.musicxml+xml' });
+                            const downloadUrl = URL.createObjectURL(blob);
+                            
+                            scoreContainer.innerHTML = `
+                                <div style="text-align: center; margin: 20px 0; padding: 30px; 
+                                           border: 2px solid #28a745; border-radius: 10px; background: #f8fff9;">
+                                    <h4>🎼 Partitura Musical</h4>
+                                    <div style="margin: 20px 0;">
+                                        <button id="renderSheetMusic" class="btn" style="background: #007bff; color: white; margin-right: 10px;">
+                                            👀 Ver Partitura
+                                        </button>
+                                        <a href="${downloadUrl}" download="${baseFileName}_score.musicxml" 
+                                           class="btn" style="background: #28a745; color: white;">
+                                            📥 Descargar MusicXML
+                                        </a>
+                                    </div>
+                                    <div id="sheetMusicContainer" style="display: none; margin: 20px 0; padding: 20px; 
+                                                                          background: white; border-radius: 10px; 
+                                                                          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                                                                          overflow-x: auto;">
+                                        <h5>📄 Partitura Interactiva</h5>
+                                        <div id="osmdContainer" style="min-height: 400px;"></div>
+                                        <div style="margin-top: 15px; text-align: center;">
+                                            <button id="hideSheetMusic" class="btn" style="background: #6c757d; color: white;">
+                                                🙈 Ocultar Partitura
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <details style="margin-top: 15px; text-align: left;">
+                                        <summary style="cursor: pointer; font-weight: bold;">🔧 Ver contenido XML</summary>
+                                        <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; 
+                                                   overflow-x: auto; max-height: 300px; font-size: 12px;">
+                                            ${xmlContent.substring(0, 1000)}${xmlContent.length > 1000 ? '...' : ''}
+                                        </pre>
+                                    </details>
+                                    <p style="color: #666; font-size: 14px; margin-top: 15px;">
+                                        💡 También puedes abrir el archivo en MuseScore, Sibelius, Finale u otro software de notación musical
+                                    </p>
+                                </div>
+                            `;
+                            
+                            // Agregar event listeners para mostrar/ocultar la partitura
+                            document.getElementById('renderSheetMusic').addEventListener('click', function() {
+                                renderMusicXMLSheet(xmlContent);
+                            });
+                            
+                            document.getElementById('hideSheetMusic').addEventListener('click', function() {
+                                document.getElementById('sheetMusicContainer').style.display = 'none';
+                            });
+                        } else {
+                            console.log(`⚠️ MusicXML estático parece inválido: ${xmlContent.substring(0, 100)}`);
+                            throw new Error('MusicXML estático inválido o corrupto');
+                        }
+                    })
+                    .catch(error => {
+                        console.log(`❌ No se pudo cargar MusicXML estático: ${error.message}`);
+                        // Si no hay archivo estático válido, intentar endpoint API dinámico
+                        console.log('🔄 Intentando generar MusicXML dinámicamente...');
+                        tryDynamicMusicXML();
+                    });
+            }
+        }
         
-        // Convertir notas a formato VexFlow
-        const vexNotes = notesData.slice(0, 16).map(note => {
-            const noteName = note.note.split('/')[0];
-            const octave = parseInt(note.note.split('/')[1]);
-            return `${noteName}/${octave}/${note.duration}`;
-        });
+        // Función para intentar generar MusicXML dinámicamente
+        function tryDynamicMusicXML() {
+            console.log('🚀 DEBUG: Ejecutando tryDynamicMusicXML - versión actualizada');
+            const apiEndpoint = `/api/musicxml/${songName}/${instrument}`;
+            console.log(`🎵 Intentando endpoint dinámico: ${apiEndpoint}`);
+            
+            scoreContainer.innerHTML = `
+                <div style="text-align: center; margin: 20px 0; padding: 30px; 
+                           border: 2px dashed #ffa500; border-radius: 10px; background: #fff7e6;">
+                    <div style="margin-bottom: 15px;">
+                        <div class="loading-spinner"></div>
+                    </div>
+                    <h4>🎼 Generando Partitura MusicXML...</h4>
+                    <p>Procesando MIDI con MuseScore...</p>
+                </div>
+            `;
+            
+            fetch(apiEndpoint)
+                .then(response => {
+                    console.log(`📡 Respuesta del API: ${response.status} ${response.statusText}`);
+                    if (response.ok) {
+                        return response.text();
+                    } else {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                })
+                .then(musicxmlContent => {
+                    console.log(`✅ MusicXML recibido - ${musicxmlContent.length} caracteres`);
+                    console.log(`🔍 Inicio del XML: ${musicxmlContent.substring(0, 100)}`);
+                    
+                    // Crear un blob para descarga
+                    const blob = new Blob([musicxmlContent], { type: 'application/vnd.recordare.musicxml+xml' });
+                    const downloadUrl = URL.createObjectURL(blob);
+                    
+                    scoreContainer.innerHTML = `
+                        <div style="text-align: center; margin: 20px 0; padding: 30px; 
+                                   border: 2px solid #28a745; border-radius: 10px; background: #f8fff9;">
+                            <h4>🎼 Partitura Musical Generada</h4>
+                            <p>La partitura ha sido generada exitosamente desde el MIDI.</p>
+                            <div style="margin: 20px 0;">
+                                <button id="renderSheetMusicDynamic" class="btn" style="background: #007bff; color: white; margin-right: 10px;">
+                                    👀 Ver Partitura
+                                </button>
+                                <a href="${downloadUrl}" download="${baseFileName}_generated.musicxml" 
+                                   class="btn" style="background: #28a745; color: white;">
+                                    📥 Descargar MusicXML
+                                </a>
+                            </div>
+                            <div id="sheetMusicContainerDynamic" style="display: none; margin: 20px 0; padding: 20px; 
+                                                                          background: white; border-radius: 10px; 
+                                                                          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                                                                          overflow-x: auto;">
+                                <h5>📄 Partitura Interactiva Generada</h5>
+                                <div id="osmdContainerDynamic" style="min-height: 400px;"></div>
+                                <div style="margin-top: 15px; text-align: center;">
+                                    <button id="hideSheetMusicDynamic" class="btn" style="background: #6c757d; color: white;">
+                                        🙈 Ocultar Partitura
+                                    </button>
+                                </div>
+                            </div>
+                            <details style="margin-top: 15px; text-align: left;">
+                                <summary style="cursor: pointer; font-weight: bold;">🔧 Ver contenido XML</summary>
+                                <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; 
+                                           overflow-x: auto; max-height: 300px; font-size: 12px;">
+                                    ${musicxmlContent.substring(0, 1000)}${musicxmlContent.length > 1000 ? '...' : ''}
+                                </pre>
+                            </details>
+                            <p style="color: #666; font-size: 14px; margin-top: 15px;">
+                                💡 También puedes abrir el archivo en MuseScore, Sibelius, Finale u otro software de notación musical
+                            </p>
+                        </div>
+                    `;
+                    
+                    // Agregar event listeners para la versión dinámica
+                    document.getElementById('renderSheetMusicDynamic').addEventListener('click', function() {
+                        renderMusicXMLSheet(musicxmlContent, 'osmdContainerDynamic', 'sheetMusicContainerDynamic');
+                    });
+                    
+                    document.getElementById('hideSheetMusicDynamic').addEventListener('click', function() {
+                        document.getElementById('sheetMusicContainerDynamic').style.display = 'none';
+                    });
+                })
+                .catch(error => {
+                    console.error(`❌ Error generando MusicXML dinámico: ${error.message}`);
+                    scoreContainer.innerHTML = `
+                        <div style="text-align: center; margin: 20px 0; padding: 30px; 
+                                   border: 2px solid #dc3545; border-radius: 10px; background: #fff5f5;">
+                            <h4>❌ No se pudo generar la partitura</h4>
+                            <p>Error: ${error.message}</p>
+                            <details style="margin-top: 15px;">
+                                <summary>🔧 Información de depuración</summary>
+                                <p><strong>Endpoint intentado:</strong> ${apiEndpoint}</p>
+                                <p><strong>Instrumento:</strong> ${instrument}</p>
+                                <p><strong>Archivo base:</strong> ${baseFileName}</p>
+                                <p>Revisa la consola del navegador y los logs del servidor para más detalles.</p>
+                            </details>
+                        </div>
+                    `;
+                    
+                    // Mostrar mensaje final de fallo después de 3 segundos
+                    setTimeout(() => {
+                        scoreContainer.innerHTML = `
+                            <div style="text-align: center; margin: 20px 0; padding: 30px; 
+                                       border: 2px dashed #ccc; border-radius: 10px; background: #f9f9f9;">
+                                <h4>❌ No se encontraron partituras</h4>
+                                <p>No se pudieron cargar partituras en ningún formato disponible.</p>
+                                <p>💡 Vuelve a procesar el audio para generar partituras automáticamente.</p>
+                            </div>
+                        `;
+                    }, 3000);
+                });
+        }
         
-        if (vexNotes.length > 0) {
-            system.addStave({
-                voices: [score.voice(score.notes(vexNotes.join(', ')))]
+        // Empezar a intentar cargar formatos
+        tryLoadFormat(0);
+    }
+    
+    // Variables globales para almacenar la instancia de OSMD y datos de sincronización
+    let currentOSMD = null;
+    let currentNotesData = null;
+    let syncInterval = null;
+    let globalAudioPlayer = null; // Referencia al reproductor de audio para sincronización
+    
+    // Función para renderizar MusicXML usando OpenSheetMusicDisplay
+    function renderMusicXMLSheet(musicxmlContent, containerId = 'osmdContainer', parentContainerId = 'sheetMusicContainer') {
+        console.log('🎼 Iniciando renderizado de partitura...');
+        
+        try {
+            // Mostrar el contenedor
+            document.getElementById(parentContainerId).style.display = 'block';
+            
+            // Limpiar el contenedor anterior
+            const container = document.getElementById(containerId);
+            container.innerHTML = '<p>🔄 Cargando partitura...</p>';
+            
+            // Crear instancia de OpenSheetMusicDisplay
+            const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(containerId, {
+                // Configuración para mejor visualización
+                autoResize: true,
+                backend: 'svg',
+                drawTitle: false,
+                drawComposer: false,
+                drawLyricist: false,
+                drawPartNames: true,
+                drawPartAbbreviations: false,
+                fillEmptyMeasuresWithWholeRest: false,
+                setWantedStemDirectionByXml: true,
+                drawUpToMeasureNumber: 20, // Limitar a 20 compases para mejor rendimiento
+                coloringMode: 0,
+                defaultColorNotehead: '#000000',
+                defaultColorStem: '#000000',
+                autoGenerateMultipleRestMeasuresFromRestMeasures: false
             });
             
-            factory.draw();
-        } else {
-            scoreDiv.innerHTML = '<p>No se pudieron renderizar las notas</p>';
+            console.log('📄 OpenSheetMusicDisplay inicializado, cargando XML...');
+            
+            // Cargar el MusicXML
+            osmd.load(musicxmlContent).then(() => {
+                console.log('✅ MusicXML cargado, renderizando...');
+                
+                // Renderizar la partitura
+                osmd.render();
+                
+                // Guardar la instancia para sincronización
+                currentOSMD = osmd;
+                
+                console.log('🎼 Partitura renderizada exitosamente!');
+                console.log('🎵 Sincronización con audio habilitada');
+                
+                // Extraer tabla de tiempos de notas inmediatamente después de renderizar
+                setTimeout(() => {
+                    extractNoteTimingsFromOSMD();
+                }, 500); // Dar tiempo para que OSMD termine de renderizar
+                
+                // Verificar si ya existe el checkbox de sincronización global
+                if (!document.getElementById('enableSync')) {
+                    // Crear checkbox global en el área de controles de audio
+                    const audioControls = document.querySelector('.audio-controls') || document.body;
+                    const syncControls = document.createElement('div');
+                    syncControls.id = 'syncControls';
+                    syncControls.style.cssText = `
+                        text-align: center; 
+                        margin: 15px 0; 
+                        padding: 10px; 
+                        background: #e3f2fd; 
+                        border-radius: 8px; 
+                        border: 2px solid #2196f3;
+                    `;
+                    syncControls.innerHTML = `
+                        <div style="margin-bottom: 10px;">
+                            <label style="margin-right: 15px; font-weight: bold;">
+                                <input type="checkbox" id="enableSync" checked> 
+                                🎯 Sincronizar partitura con audio
+                            </label>
+                            <button id="resetHighlight" class="btn" style="background: #ffc107; color: black; padding: 5px 15px; font-size: 12px;">
+                                🔄 Reiniciar resaltado
+                            </button>
+                        </div>
+                        <small style="color: #666;">
+                            🎵 La sincronización resalta automáticamente las notas durante la reproducción
+                        </small>
+                    `;
+                    
+                    // Insertar antes del contenedor de partitura
+                    const scoreContainer = document.getElementById('scoreContainer');
+                    if (scoreContainer && scoreContainer.parentNode) {
+                        scoreContainer.parentNode.insertBefore(syncControls, scoreContainer);
+                    } else {
+                        document.body.appendChild(syncControls);
+                    }
+                    
+                    console.log('🎯 [SYNC DEBUG] Checkbox de sincronización global creado');
+                }
+                
+                // Agregar información adicional local
+                container.insertAdjacentHTML('beforeend', `
+                    <div style="text-align: center; margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                        <small style="color: #666;">
+                            ✨ Partitura renderizada con OpenSheetMusicDisplay
+                            <br/>📏 Mostrando hasta 20 compases para optimizar rendimiento
+                            <br/>🎯 Usa los controles de sincronización arriba para habilitar/deshabilitar
+                        </small>
+                    </div>
+                `);
+                
+                // Agregar event listeners para los controles de sincronización (solo si no existen)
+                const resetButton = document.getElementById('resetHighlight');
+                if (resetButton && !resetButton.hasAttribute('data-listener-added')) {
+                    resetButton.addEventListener('click', function() {
+                        if (currentOSMD) {
+                            currentOSMD.cursor.reset();
+                            currentOSMD.render();
+                            console.log('🔄 Resaltado reiniciado');
+                        }
+                    });
+                    resetButton.setAttribute('data-listener-added', 'true');
+                    console.log('🎯 [SYNC DEBUG] Event listener para resetHighlight agregado');
+                }
+                
+            }).catch(error => {
+                console.error('❌ Error al cargar MusicXML:', error);
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #d32f2f;">
+                        <h5>❌ Error al cargar la partitura</h5>
+                        <p>No se pudo renderizar el archivo MusicXML:</p>
+                        <pre style="color: #666; font-size: 12px;">${error.message}</pre>
+                        <p><small>💡 Intenta descargar el archivo y abrirlo en MuseScore</small></p>
+                    </div>
+                `;
+            });
+            
+        } catch (error) {
+            console.error('❌ Error general en renderMusicXMLSheet:', error);
+            const container = document.getElementById(containerId);
+            container.innerHTML = `
+                <div style="text-align: center; padding: 20px; color: #d32f2f;">
+                    <h5>❌ Error de renderizado</h5>
+                    <p>Error inesperado al inicializar el visor de partituras:</p>
+                    <pre style="color: #666; font-size: 12px;">${error.message}</pre>
+                </div>
+            `;
         }
     }
+    
+    // Función obsoleta mantenida para compatibilidad
+    function renderScore(notesData) {
+        // Redirigir a la nueva función de carga de imágenes
+        loadScoreImage('{{ song_name }}', '{{ instrument }}');
+        }
 </script>
 {% endblock %} 

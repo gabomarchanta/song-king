@@ -192,7 +192,7 @@ def process_song(upload_path, stems_folder, progress_callback=None):
 
         # 2. Definir rutas de origen y destino con separadores correctos
         demucs_default_output = os.path.join('separated', model, song_name_without_ext)
-        final_output_dir = os.path.join(stems_folder, song_name_without_ext, model)
+        final_output_dir = os.path.join(stems_folder, model)  # stems_folder ya incluye el nombre de la canción
         
         # Normalizar rutas para el entorno actual
         demucs_default_output = os.path.normpath(demucs_default_output)
@@ -355,6 +355,32 @@ def process_song(upload_path, stems_folder, progress_callback=None):
         else:
             print("TASK [Main]: No se encontraron archivos necesarios para clustering de 'other'")
 
+        # 7. Generar partituras con MuseScore
+        print(f"🎼 Generando partituras con MuseScore...")
+        update_progress("Generando partituras visuales...", 95)
+        
+        try:
+            from app.utils.musescore import generate_all_score_formats
+            
+            # Generar partituras para cada instrumento MIDI
+            midi_files_in_dir = [f for f in os.listdir(output_dir) if f.endswith('.mid')]
+            for midi_file in midi_files_in_dir:
+                midi_path = os.path.join(output_dir, midi_file)
+                base_name = os.path.splitext(midi_file)[0]
+                score_path = os.path.join(output_dir, f"{base_name}_score")
+                
+                print(f"📄 Generando partitura para: {midi_file}")
+                generated_scores = generate_all_score_formats(midi_path, score_path)
+                
+                if generated_scores:
+                    print(f"✅ Partituras generadas: {list(generated_scores.keys())}")
+                else:
+                    print(f"⚠️ No se pudieron generar partituras para {midi_file}")
+                    
+        except Exception as e:
+            print(f"⚠️ Error generando partituras: {e}")
+            # No es crítico, continuamos sin partituras
+        
         update_progress(f"Proceso completado exitosamente para '{song_name_without_ext}'", 100)
 
     except subprocess.CalledProcessError as e:

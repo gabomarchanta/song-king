@@ -12,17 +12,18 @@ Song King es una aplicación web moderna que utiliza inteligencia artificial par
 - **Separación de Stems con IA** - Utiliza Demucs para separar voz, bajo, batería y otros instrumentos
 - **Transcripción MIDI Inteligente** - Convierte audio a MIDI usando basic-pitch de Spotify
 - **Clustering de Instrumentos** - Identifica automáticamente guitarra, piano y sintetizadores
-- **Partituras Profesionales** - Genera partituras PNG de alta calidad con MuseScore
+- **Partituras Interactivas** - Visualización con OpenSheetMusicDisplay (OSMD) y VexFlow
+- **Sincronización Audio-Partitura** - Seguimiento visual en tiempo real durante la reproducción
 - **Interfaz Moderna** - Diseño responsivo tipo design engineer con componentes modernos
 
 ### 🔧 Tecnologías
 - **Backend**: Flask, Python 3.10+
 - **IA/ML**: Demucs, basic-pitch, music21
 - **Frontend**: HTML5, CSS3 moderno, JavaScript ES6+
+- **Partituras**: OpenSheetMusicDisplay (OSMD), VexFlow, MuseScore integration
 - **Diseño**: CSS Grid, Variables CSS, Gradientes modernos
-- **Audio**: librosa, numpy, scipy
+- **Audio**: librosa, numpy, scipy, Web Audio API
 - **MIDI**: music21, mido
-- **Partituras**: MuseScore integration
 
 ## 🚀 Instalación
 
@@ -30,7 +31,7 @@ Song King es una aplicación web moderna que utiliza inteligencia artificial par
 - **Python 3.10** (recomendado) o 3.11 - **NO usar 3.12**
 - Git
 - FFmpeg  
-- MuseScore 4
+- MuseScore 4 (opcional, para generación de PNG)
 - CUDA (opcional, para mejor rendimiento con GPU)
 - Al menos 4GB de RAM libre
 
@@ -44,18 +45,18 @@ cd song-king
 sudo apt update
 sudo apt install python3-pip python3-venv ffmpeg
 
-# Crear entorno virtual
+# Crear y activar entorno virtual
 python3 -m venv venv
 source venv/bin/activate
 
 # Instalar dependencias Python
 pip install -r requirements.txt
 
-# Instalar MuseScore
+# Instalar MuseScore (opcional)
 sudo apt install musescore4
 
 # Ejecutar la aplicación
-python app.py
+python run.py
 ```
 
 ### Windows
@@ -64,7 +65,7 @@ python app.py
 git clone https://github.com/tu-usuario/song-king.git
 cd song-king
 
-# Crear entorno virtual
+# Crear y activar entorno virtual
 python -m venv venv
 venv\Scripts\activate
 
@@ -72,14 +73,19 @@ venv\Scripts\activate
 pip install -r requirements.txt
 
 # Ejecutar la aplicación
-python app.py
+python run.py
 ```
 
 ## 📖 Uso
 
 1. **Iniciar la aplicación**
    ```bash
-   python app.py
+   # Activar el entorno virtual si no está activo
+   source venv/bin/activate  # En Ubuntu/WSL
+   # venv\Scripts\activate   # En Windows
+   
+   # Iniciar el servidor
+   python run.py
    ```
 
 2. **Abrir en navegador**
@@ -98,8 +104,29 @@ python app.py
 5. **Explorar resultados**
    - Reproducir stems separados
    - Descargar archivos MIDI
-   - Ver partituras generadas
+   - **Ver partituras interactivas** con sincronización
    - Analizar estadísticas musicales
+
+## 🎼 Partituras Interactivas
+
+### Nuevas Características v2.0
+- **Visualización Avanzada**: Usa OpenSheetMusicDisplay (OSMD) para renderizado profesional
+- **Sincronización en Tiempo Real**: El cursor sigue la reproducción del audio automáticamente
+- **Controles de Reproducción**: Play, Pause, Stop, Reset integrados
+- **Acceso Directo**: Botón "Ver Partitura Interactiva" desde la interfaz principal
+
+### URLs de Partituras
+Las partituras interactivas se acceden mediante:
+```
+http://127.0.0.1:5000/score/{nombre_cancion}/{instrumento}
+```
+
+Ejemplos:
+- `/score/mi_cancion/vocals` - Partitura de voz
+- `/score/mi_cancion/bass` - Partitura de bajo
+- `/score/mi_cancion/guitar` - Partitura de guitarra
+- `/score/mi_cancion/piano` - Partitura de piano
+- `/score/mi_cancion/synth` - Partitura de sintetizador
 
 ## 🎹 Pipeline de Procesamiento
 
@@ -110,8 +137,10 @@ graph TD
     B --> D[Clustering: Identificación de Instrumentos]
     C --> E[music21: Análisis Musical]
     D --> E
-    E --> F[MuseScore: Generación de Partituras]
-    F --> G[Visualización Web]
+    E --> F[MusicXML: Formato Estándar]
+    F --> G[OSMD: Partitura Interactiva]
+    F --> H[MuseScore: PNG/PDF opcional]
+    G --> I[Sincronización Audio-Visual]
 ```
 
 ### Archivos Generados
@@ -124,6 +153,7 @@ graph TD
 - `other_cluster_0_guitar.mid` - MIDI de guitarra (clustering)
 - `other_cluster_1_piano.mid` - MIDI de piano (clustering)
 - `other_cluster_2_synth.mid` - MIDI de sintetizador (clustering)
+- `*.musicxml` - Partituras en formato MusicXML estándar
 
 ## 🎨 Diseño Moderno
 
@@ -145,8 +175,9 @@ graph TD
 ### Principales
 - `POST /` - Subir y procesar archivo de audio
 - `GET /api/job-status/<job_id>` - Estado del procesamiento
+- `GET /score/<song>/<instrument>` - **Partitura interactiva**
 - `GET /api/score/<song>/<instrument>` - Información de partitura
-- `GET /api/score/<song>/<instrument>/render` - Imagen de partitura
+- `GET /api/score/<song>/<instrument>/render` - Imagen de partitura (opcional)
 
 ### Utilidades
 - `GET /api/health` - Estado de salud de la aplicación
@@ -168,9 +199,41 @@ graph TD
 }
 ```
 
+## 🔧 Arquitectura del Proyecto
+
+### Estructura de Archivos
+```
+song-king/
+├── run.py                    # 🚀 Punto de entrada principal (refactorizado desde app.py)
+├── app/
+│   ├── routes/
+│   │   ├── main.py          # Rutas principales de la aplicación
+│   │   ├── api.py           # Endpoints de API REST
+│   │   └── score.py         # 🎼 Rutas de partituras interactivas
+│   ├── services/
+│   │   ├── song_processor.py # Lógica de procesamiento de audio
+│   │   └── job_manager.py   # Gestión de trabajos en segundo plano
+│   └── utils/
+│       └── musescore.py     # Utilidades para MuseScore
+├── templates/
+│   ├── index.html           # Interfaz principal
+│   ├── interactive_score.html # 🎼 Template de partitura interactiva
+│   └── layout.html          # Layout base
+└── static/
+    ├── css/modern.css       # Estilos modernos
+    ├── js/vexflow.js        # Biblioteca VexFlow
+    └── stems/               # Archivos procesados
+```
+
+### Cambios Importantes v2.0
+- **Refactorización**: `app.py` → `run.py` como punto de entrada
+- **Modularización**: Separación de rutas en módulos específicos
+- **Partituras Interactivas**: Nuevo módulo `score.py` y template dedicado
+- **Sincronización**: Integración de Web Audio API con OpenSheetMusicDisplay
+
 ## 🔧 Configuración Opcional - MuseScore (Para Partituras PNG)
 
-Song King puede generar partituras en formato MusicXML (compatible con la mayoría de visualizadores) o PNG de alta calidad usando MuseScore.
+Song King genera partituras interactivas en MusicXML por defecto. MuseScore es opcional para generar imágenes PNG/PDF adicionales.
 
 ### Windows/WSL
 ```bash
@@ -178,7 +241,39 @@ Song King puede generar partituras en formato MusicXML (compatible con la mayor�
 # Instalar en C:\Program Files\MuseScore 4\
 ```
 
-### Ubuntu/Debian
+### Ubuntu/Debian (WSL)
+```bash
+# Instalar MuseScore via Flatpak (recomendado para WSL)
+sudo apt update
+sudo apt install flatpak
+sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+sudo flatpak install flathub org.musescore.MuseScore
+
+# Crear script lanzador para music21
+sudo nano /usr/local/bin/mscore-launcher
+```
+
+**Contenido del archivo `/usr/local/bin/mscore-launcher`:**
+```bash
+#!/bin/bash
+/usr/bin/flatpak run org.musescore.MuseScore "$@"
+```
+
+```bash
+# Hacer el script ejecutable
+sudo chmod +x /usr/local/bin/mscore-launcher
+
+# Configurar music21 para usar el lanzador
+python3 -c "
+from music21 import environment
+us = environment.UserSettings()
+us['musicxmlPath'] = '/usr/local/bin/mscore-launcher'
+us['musescoreDirectPNGPath'] = '/usr/local/bin/mscore-launcher'
+print('✅ MuseScore configurado correctamente para music21')
+"
+```
+
+### Ubuntu/Debian (Nativo)
 ```bash
 sudo apt update
 sudo apt install musescore4
@@ -191,140 +286,134 @@ sudo apt install musescore4
 brew install --cask musescore
 ```
 
-**Nota:** Si MuseScore no está instalado, Song King funcionará perfectamente pero las partituras se generarán como MusicXML en lugar de imágenes PNG.
+**Nota:** Si MuseScore no está instalado, Song King funcionará perfectamente con partituras interactivas MusicXML usando OSMD.
 
 ## ⚙️ Configuración
 
 ### Variables de Entorno
 ```bash
 # Configuración de Flask
+FLASK_APP=run.py
 FLASK_ENV=development
-FLASK_DEBUG=1
+FLASK_DEBUG=true
 
-# Configuración de archivos
+# Límites de procesamiento
 MAX_CONTENT_LENGTH=104857600  # 100MB
-UPLOAD_FOLDER=uploads
-STEMS_FOLDER=static/stems
+UPLOAD_TIMEOUT=600           # 10 minutos
 
-# Configuración de Demucs
-DEMUCS_MODEL=htdemucs
+# Configuración de IA
+USE_GPU=true                 # Usar CUDA si disponible
+DEMUCS_MODEL=htdemucs       # Modelo de separación de stems
 ```
 
-### Configuración de MuseScore
-La aplicación detecta automáticamente MuseScore en estas ubicaciones:
-- `/usr/local/bin/mscore-launcher` (Ubuntu/AppImage)
-- `/usr/bin/musescore4` (Ubuntu/package)
-- `C:\Program Files\MuseScore 4\bin\MuseScore4.exe` (Windows)
-- `/Applications/MuseScore 4.app/Contents/MacOS/mscore` (macOS)
-
-## 🔧 Desarrollo
-
-### Estructura del Proyecto
-```
-song-king/
-├── app.py                 # Aplicación Flask principal
-├── config.py              # Configuración de la aplicación
-├── tasks.py               # Tareas de procesamiento de audio
-├── requirements.txt       # Dependencias Python
-├── static/
-│   ├── css/
-│   │   └── modern.css     # Estilos modernos
-│   ├── js/
-│   │   └── vexflow.js     # Librería de notación musical
-│   └── stems/             # Archivos procesados
-├── templates/
-│   └── index.html         # Template principal
-├── uploads/               # Archivos subidos temporalmente
-└── venv/                  # Entorno virtual
-```
-
-### Agregar Nuevas Características
-1. **Nuevos modelos de IA**: Modificar `tasks.py`
-2. **Nuevos endpoints**: Agregar en `app.py`
-3. **Nuevos estilos**: Editar `static/css/modern.css`
-4. **Nueva funcionalidad frontend**: Modificar `templates/index.html`
-
-## 🐛 Resolución de Problemas
-
-### Problemas Comunes
-
-**Error: MuseScore no encontrado**
+### Configuración de Desarrollo
 ```bash
-# Ubuntu
-sudo apt install musescore4
+# Activar modo debug
+export FLASK_DEBUG=1
 
-# Verificar instalación
-which musescore4
+# Iniciar con recarga automática
+python run.py
+
+# Para producción usar gunicorn
+gunicorn -c gunicorn_config.py run:app
 ```
 
-**Error: FFmpeg no encontrado**
+## 🧪 Testing
+
+### Archivos de Prueba
+El proyecto incluye archivos de prueba para verificar el funcionamiento:
+- `test_format.musicxml` - Archivo MusicXML de prueba
+- `test_format.pdf` - PDF de partitura de prueba
+- `test_format-1.svg` - SVG generado de muestra
+
+### Verificar Instalación
 ```bash
-# Ubuntu
-sudo apt install ffmpeg
+# Verificar Python 3.10
+python check_python310.py
 
-# Verificar instalación
-ffmpeg -version
+# Probar dependencias
+python -c "import librosa, music21, flask; print('✅ Dependencias OK')"
+
+# Verificar MuseScore (WSL/Flatpak)
+/usr/local/bin/mscore-launcher --version
+
+# Verificar MuseScore (Nativo)
+musescore4 --version
+
+# Probar integración music21 + MuseScore
+python -c "
+from music21 import environment, stream, note
+us = environment.UserSettings()
+print('🎼 MuseScore configurado en:', us['musicxmlPath'])
+print('🖼️  PNG configurado en:', us['musescoreDirectPNGPath'])
+
+# Crear una nota simple y probar conversión
+s = stream.Stream()
+s.append(note.Note('C4'))
+print('✅ MuseScore + music21 funcionando correctamente')
+"
 ```
 
-**Error: Memoria insuficiente**
-- Reducir el tamaño del archivo de audio
-- Cerrar otras aplicaciones
-- Aumentar memoria virtual del sistema
+## 🚨 Solución de Problemas
 
-**Error: Archivo muy grande**
-- Máximo: 100MB
-- Comprimir el audio antes de subir
-- Usar formato MP3 en lugar de WAV
+### Problema: "Error JSON durante subida"
+- **Causa**: Conflicto entre JavaScript y formulario Flask
+- **Solución**: Refactorizado en v2.0 para usar envío de formulario nativo con monitoreo automático de progreso
 
-### Logs de Debugging
-Los logs aparecen en la consola donde ejecutaste `python app.py`:
-```
-🎵 Iniciando Song King v2.0...
-✨ Aplicación mejorada con diseño moderno
-🚀 Servidor disponible en: http://127.0.0.1:5000
+### Problema: "Partitura no se muestra"
+- **Verificar**: Archivos MIDI en `static/stems/{cancion}/htdemucs/`
+- **Solución**: Usar ruta directa `/score/{cancion}/{instrumento}`
+
+### Problema: "Sincronización no funciona"
+- **Verificar**: Consola del navegador para logs de OSMD
+- **Solución**: Activar checkbox "👀 Ver Partitura" en la interfaz
+
+### Problema: "Servidor se reinicia en WSL"
+- **Causa**: Modo debug de Flask
+- **Solución**: Para producción usar `FLASK_DEBUG=false`
+
+### Problema: "MuseScore no funciona en WSL"
+- **Síntoma**: Error al generar imágenes PNG de partituras
+- **Causa**: music21 no encuentra MuseScore correctamente
+- **Solución**: Seguir la configuración completa de Flatpak + script lanzador
+```bash
+# Verificar que Flatpak funciona
+flatpak run org.musescore.MuseScore --version
+
+# Verificar que el script lanzador existe
+ls -la /usr/local/bin/mscore-launcher
+
+# Reconfigurar music21
+python -c "
+from music21 import environment
+us = environment.UserSettings()
+us['musicxmlPath'] = '/usr/local/bin/mscore-launcher'
+us['musescoreDirectPNGPath'] = '/usr/local/bin/mscore-launcher'
+"
 ```
 
 ## 🤝 Contribuir
 
-¡Las contribuciones son bienvenidas! Por favor:
-
-1. Fork el repositorio
-2. Crea una rama para tu feature (`git checkout -b feature/nueva-caracteristica`)
-3. Commit tus cambios (`git commit -am 'Agregar nueva característica'`)
-4. Push a la rama (`git push origin feature/nueva-caracteristica`)
-5. Abre un Pull Request
-
-### Áreas de Contribución
-- 🎵 Nuevos modelos de separación de audio
-- 🎼 Mejoras en transcripción MIDI
-- 🎨 Mejoras de diseño y UX
-- 📱 Optimizaciones móviles
-- 🔧 Optimizaciones de rendimiento
-- 📚 Documentación y tutoriales
+1. Fork el proyecto
+2. Crear branch para feature (`git checkout -b feature/AmazingFeature`)
+3. Commit cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push al branch (`git push origin feature/AmazingFeature`)
+5. Abrir Pull Request
 
 ## 📄 Licencia
 
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
+Distribuido bajo la Licencia MIT. Ver `LICENSE` para más información.
 
-## 🙏 Agradecimientos
+## 🎯 Roadmap v2.1
 
-- **Demucs** - Por la excelente separación de fuentes de audio
-- **basic-pitch** - Por la transcripción MIDI de alta calidad
-- **music21** - Por las herramientas de análisis musical
-- **MuseScore** - Por la generación de partituras profesionales
-- **Flask** - Por el framework web simple y potente
-- **Inter Font** - Por la tipografía moderna y legible
-
-## 📊 Estadísticas del Proyecto
-
-- **Líneas de código**: ~2,000+
-- **Dependencias**: 15+ librerías especializadas
-- **Formatos soportados**: MP3, WAV, M4A, FLAC
-- **Instrumentos detectados**: 5+ tipos automáticamente
-- **Tiempo de procesamiento**: 3-5 minutos por canción promedio
+- [ ] **Exportación de partituras** en múltiples formatos (PDF, MIDI, MusicXML)
+- [ ] **Edición de partituras** directamente en la interfaz web
+- [ ] **Reconocimiento de acordes** automático
+- [ ] **Análisis armónico** avanzado
+- [ ] **Plantillas de instrumentos** personalizables
+- [ ] **API REST completa** para integración externa
+- [ ] **Soporte multi-idioma** (ES, EN, FR, DE)
 
 ---
 
-**Desarrollado con ❤️ para la comunidad musical**
-
-¿Tienes preguntas? [Abre un issue](https://github.com/tu-usuario/song-king/issues) o [inicia una discusión](https://github.com/tu-usuario/song-king/discussions). 
+**Song King v2.0** - Convirtiendo música en partituras inteligentes desde 2024 🎵 

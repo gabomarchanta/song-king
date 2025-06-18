@@ -88,13 +88,31 @@ def render_score_interactive(song_name, instrument):
                     
                     current_time = end_time
         
+        # Construir rutas de archivos
+        audio_files = {
+            'vocals': 'vocals.wav',
+            'bass': 'bass.wav', 
+            'guitar': 'other.wav',  # Guitar viene del archivo 'other'
+            'piano': 'other.wav',   # Piano viene del archivo 'other'
+            'synth': 'other.wav'    # Synth viene del archivo 'other'
+        }
+        
+        audio_file_path = f'/static/stems/{song_name}/htdemucs/{audio_files[instrument]}'
+        midi_file_path = f'/static/stems/{song_name}/htdemucs/{instrument_files[instrument]}'
+        
+        # Verificar que el archivo de audio existe
+        audio_full_path = os.path.join('static', 'stems', song_name, 'htdemucs', audio_files[instrument])
+        if not os.path.exists(audio_full_path):
+            return jsonify({'error': f'Archivo de audio no encontrado: {audio_file_path}'}), 404
+        
         # Crear respuesta con datos de reproducción
         response_data = {
             'notes': notes_data,
             'total_duration': current_time,
             'instrument': instrument,
             'song_name': song_name,
-            'midi_file': f'/static/stems/{song_name}/htdemucs/{instrument_files[instrument]}'
+            'midi_file': midi_file_path,
+            'audio_file': audio_file_path
         }
         
         return jsonify(response_data)
@@ -229,32 +247,168 @@ def get_score(song_name, instrument):
 
 @api_bp.route('/api/musicxml/<string:song_name>')
 def get_musicxml_data(song_name):
-    """Obtener datos MusicXML para una canción específica"""
-    try:
-        # Buscar archivos MusicXML en el directorio de la canción
-        song_dir = os.path.join('static', 'stems', song_name)
-        if not os.path.exists(song_dir):
-            return jsonify({'error': 'Canción no encontrada'}), 404
-        
-        musicxml_files = []
-        for root, dirs, files in os.walk(song_dir):
+    """Obtener datos MusicXML para una canción específica (archivo other_basic_pitch.mid)"""
+    print(f"🎵 API: Solicitud recibida para song_name: {song_name}")
+    
+    midi_filename = 'other_basic_pitch.mid'
+    # La ruta base donde están los archivos de esta canción
+    base_path = os.path.join('static', 'stems', song_name, 'htdemucs')
+    midi_full_path = os.path.join(base_path, midi_filename)
+    
+    print(f"📁 API: Buscando MIDI en: {midi_full_path}")
+    print(f"📁 API: ¿Archivo existe? {os.path.exists(midi_full_path)}")
+
+    if not os.path.exists(midi_full_path):
+        print(f"❌ API: MIDI no encontrado. Listando archivos en {base_path}:")
+        if os.path.exists(base_path):
+            files = os.listdir(base_path)
             for file in files:
-                if file.endswith('.musicxml') or file.endswith('.xml'):
-                    musicxml_files.append({
-                        'filename': file,
-                        'path': os.path.join(root, file),
-                        'relative_path': os.path.relpath(os.path.join(root, file), song_dir)
-                    })
+                if file.endswith('.mid'):
+                    print(f"   📄 Archivo MIDI encontrado: {file}")
+        else:
+            print(f"❌ API: Directorio base no existe: {base_path}")
+        return "MIDI file not found", 404
+
+    try:
+        # Forzamos la carga de la configuración para máxima robustez
+        print("🔧 API: Configurando music21...")
+        from music21 import environment
+        us = environment.UserSettings()
+        us['musicxmlPath'] = '/usr/local/bin/mscore-launcher'
+        us['musescoreDirectPNGPath'] = '/usr/local/bin/mscore-launcher'
+        print(f"✅ API: music21 configurado - musicxmlPath: {us['musicxmlPath']}")
+
+        # 1. Cargar el MIDI
+        print(f"🎼 API: Cargando MIDI desde {midi_full_path}")
+        import music21
+        score = music21.converter.parse(midi_full_path)
+        print(f"✅ API: MIDI cargado exitosamente - {len(score.parts)} partes encontradas")
         
-        return jsonify({
-            'song_name': song_name,
-            'musicxml_files': musicxml_files,
-            'total_files': len(musicxml_files)
-        })
+        # 2. Escribir a un archivo temporal .musicxml en el disco
+        xml_temp_path = os.path.join(base_path, 'temp_score.musicxml')
+        print(f"📝 API: Escribiendo MusicXML temporal en {xml_temp_path}")
+        score.write('musicxml', fp=xml_temp_path)
+        print(f"✅ API: MusicXML escrito. ¿Archivo existe? {os.path.exists(xml_temp_path)}")
+        
+        if os.path.exists(xml_temp_path):
+            file_size = os.path.getsize(xml_temp_path)
+            print(f"📊 API: Tamaño del archivo MusicXML: {file_size} bytes")
+
+        # 3. Leer el contenido del archivo generado
+        print(f"📖 API: Leyendo contenido desde {xml_temp_path}")
+        with open(xml_temp_path, 'r', encoding='utf-8') as f:
+            musicxml_data = f.read()
+        
+        print(f"📏 API: Contenido leído - {len(musicxml_data)} caracteres")
+        print(f"🔍 API: Primeros 100 caracteres: {musicxml_data[:100]}")
+        
+        # 4. (Opcional pero recomendado) Limpiar el archivo temporal
+        os.remove(xml_temp_path)
+        print("🗑️ API: Archivo temporal eliminado.")
+        
+        # 5. Comprobar que los datos leídos son un XML válido
+        if not musicxml_data.strip().startswith('<?xml'):
+            raise ValueError(f"La conversión de music21 no generó un archivo XML válido. Inicio: {musicxml_data[:50]}")
+
+        # 6. Enviar los datos
+        print("📤 API: Enviando respuesta MusicXML")
+        from flask import Response
+        return Response(musicxml_data, mimetype='application/vnd.recordare.musicxml+xml')
         
     except Exception as e:
-        print(f"Error obteniendo datos MusicXML: {e}")
-        return jsonify({'error': f'Error interno: {str(e)}'}), 500
+        print(f"❌ API: Error en get_musicxml_data: {e}")
+        import traceback
+        traceback.print_exc() # Esto nos mostrará el error exacto en la terminal de Flask
+        return str(e), 500
+
+@api_bp.route('/api/musicxml/<string:song_name>/<string:instrument>')
+def get_musicxml_instrument(song_name, instrument):
+    """Obtener datos MusicXML para un instrumento específico"""
+    print(f"🎵 API: Solicitud recibida para {song_name}/{instrument}")
+    
+    # Mapeo de instrumentos a archivos MIDI
+    instrument_files = {
+        'vocals': 'vocals_basic_pitch.mid',
+        'bass': 'bass_basic_pitch.mid',
+        'guitar': 'other_cluster_0_guitar.mid',
+        'piano': 'other_cluster_1_piano.mid',
+        'synth': 'other_cluster_2_synth.mid',
+        'other': 'other_basic_pitch.mid'
+    }
+    
+    if instrument not in instrument_files:
+        print(f"❌ API: Instrumento no válido: {instrument}")
+        return f"Instrumento no válido: {instrument}", 400
+    
+    midi_filename = instrument_files[instrument]
+    base_path = os.path.join('static', 'stems', song_name, 'htdemucs')
+    midi_full_path = os.path.join(base_path, midi_filename)
+    
+    print(f"📁 API: Buscando MIDI en: {midi_full_path}")
+    print(f"📁 API: ¿Archivo existe? {os.path.exists(midi_full_path)}")
+
+    if not os.path.exists(midi_full_path):
+        print(f"❌ API: MIDI no encontrado. Listando archivos en {base_path}:")
+        if os.path.exists(base_path):
+            files = os.listdir(base_path)
+            for file in files:
+                if file.endswith('.mid'):
+                    print(f"   📄 Archivo MIDI encontrado: {file}")
+        else:
+            print(f"❌ API: Directorio base no existe: {base_path}")
+        return "MIDI file not found", 404
+
+    try:
+        # Forzamos la carga de la configuración para máxima robustez
+        print(f"🔧 API: Configurando music21 para {instrument}...")
+        from music21 import environment
+        us = environment.UserSettings()
+        us['musicxmlPath'] = '/usr/local/bin/mscore-launcher'
+        us['musescoreDirectPNGPath'] = '/usr/local/bin/mscore-launcher'
+        print(f"✅ API: music21 configurado - musicxmlPath: {us['musicxmlPath']}")
+
+        # 1. Cargar el MIDI
+        print(f"🎼 API: Cargando MIDI desde {midi_full_path}")
+        import music21
+        score = music21.converter.parse(midi_full_path)
+        print(f"✅ API: MIDI cargado exitosamente - {len(score.parts)} partes encontradas")
+        
+        # 2. Escribir a un archivo temporal .musicxml en el disco
+        xml_temp_path = os.path.join(base_path, f'temp_score_{instrument}.musicxml')
+        print(f"📝 API: Escribiendo MusicXML temporal en {xml_temp_path}")
+        score.write('musicxml', fp=xml_temp_path)
+        print(f"✅ API: MusicXML escrito. ¿Archivo existe? {os.path.exists(xml_temp_path)}")
+        
+        if os.path.exists(xml_temp_path):
+            file_size = os.path.getsize(xml_temp_path)
+            print(f"📊 API: Tamaño del archivo MusicXML: {file_size} bytes")
+
+        # 3. Leer el contenido del archivo generado
+        print(f"📖 API: Leyendo contenido desde {xml_temp_path}")
+        with open(xml_temp_path, 'r', encoding='utf-8') as f:
+            musicxml_data = f.read()
+        
+        print(f"📏 API: Contenido leído - {len(musicxml_data)} caracteres")
+        print(f"🔍 API: Primeros 100 caracteres: {musicxml_data[:100]}")
+        
+        # 4. (Opcional pero recomendado) Limpiar el archivo temporal
+        os.remove(xml_temp_path)
+        print("🗑️ API: Archivo temporal eliminado.")
+        
+        # 5. Comprobar que los datos leídos son un XML válido
+        if not musicxml_data.strip().startswith('<?xml'):
+            raise ValueError(f"La conversión de music21 no generó un archivo XML válido. Inicio: {musicxml_data[:50]}")
+
+        # 6. Enviar los datos
+        print(f"📤 API: Enviando respuesta MusicXML para {instrument}")
+        from flask import Response
+        return Response(musicxml_data, mimetype='application/vnd.recordare.musicxml+xml')
+        
+    except Exception as e:
+        print(f"❌ API: Error en get_musicxml_instrument para {instrument}: {e}")
+        import traceback
+        traceback.print_exc()
+        return str(e), 500
 
 @api_bp.route('/api/health')
 def health_check():
@@ -301,4 +455,14 @@ def get_stats():
 @api_bp.route('/favicon.ico')
 def favicon():
     """Servir favicon"""
-    return send_from_directory('static', 'favicon.ico') 
+    from flask import current_app
+    return send_from_directory(current_app.static_folder, 'favicon.ico')
+
+@api_bp.route('/api/debug/jobs')
+def debug_jobs():
+    """Debug: mostrar todos los trabajos activos"""
+    from app.services.job_manager import job_status
+    return jsonify({
+        'active_jobs': len(job_status),
+        'jobs': job_status
+    }) 
