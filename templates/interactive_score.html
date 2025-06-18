@@ -148,6 +148,7 @@
 
 <div class="container">
     <div class="header">
+        <h1>🎼 {{ song_name }}</h1>
         <h2>Instrumento: {{ instrument.title() }}</h2>
     </div>
     
@@ -156,6 +157,7 @@
             <button class="btn" id="playBtn">▶️ Reproducir</button>
             <button class="btn" id="pauseBtn" disabled>⏸️ Pausar</button>
             <button class="btn" id="stopBtn" disabled>⏹️ Detener</button>
+            <button class="btn" id="resetBtn">🔄 Reiniciar</button>
         </div>
         
         <div class="progress-container">
@@ -172,6 +174,7 @@
         </audio>
         
         <div class="score-display" id="score">
+            <h3>🎼 Partitura Musical</h3>
             <div id="scoreContainer">
                 <p>Cargando partitura...</p>
             </div>
@@ -484,8 +487,10 @@
                     }
                 });
                 
+                console.log(`🎨 [HIGHLIGHT] ${graphicalNotes.length} notas resaltadas usando API OSMD`);
             }
         } catch (error) {
+            console.log(`⚠️ [HIGHLIGHT] Error con API OSMD, usando fallback: ${error.message}`);
             // Fallback al resaltado SVG genérico
             const timeProgressRatio = noteData.realTime / (globalAudioPlayer?.duration || 323);
             highlightCurrentNoteInSVGByTime(null, timeProgressRatio);
@@ -494,6 +499,7 @@
     
     // Nueva función para cargar datos de notas MIDI para sincronización
     function loadNotesDataForSync() {
+        console.log('🎯 [SYNC DEBUG] Cargando datos de notas desde endpoint...');
         
         const songName = '{{ song_name }}';
         const instrument = '{{ instrument }}';
@@ -509,15 +515,20 @@
             .then(data => {
                 if (data.notes && Array.isArray(data.notes)) {
                     currentNotesData = data.notes;
+                    console.log(`🎯 [SYNC DEBUG] Datos de notas cargados: ${currentNotesData.length} notas`);
+                    console.log('🎯 [SYNC DEBUG] Primeras 3 notas:', currentNotesData.slice(0, 3));
                 } else {
+                    console.log('🎯 [SYNC DEBUG] Respuesta no contiene datos de notas válidos:', data);
                 }
             })
             .catch(error => {
+                console.log('🎯 [SYNC DEBUG] Error cargando datos de notas:', error.message);
             });
     }
     
     // Función mejorada de resaltado SVG con detección inteligente de notas
     function highlightCurrentNoteInSVGByTime(currentNote, timeProgress) {
+        console.log(`🎵 [HIGHLIGHT] Resaltando en progreso: ${(timeProgress * 100).toFixed(1)}%`);
         
         // Limpiar highlights anteriores
         clearNoteHighlights();
@@ -557,6 +568,7 @@
                             const startIndex = Math.min(sectionIndex * notesPerSection, likelyNotes.length - notesPerSection);
                             const endIndex = Math.min(startIndex + notesPerSection, likelyNotes.length);
                             
+                            console.log(`🎵 [HIGHLIGHT] SVG ${svgIndex}: Resaltando notas ${startIndex}-${endIndex} de ${likelyNotes.length} (sección ${sectionIndex}/20)`);
                             
                             // Resaltar grupo de notas
                             for (let i = startIndex; i < endIndex; i++) {
@@ -587,7 +599,9 @@
         });
         
         if (totalNotesHighlighted > 0) {
+            console.log(`✅ [HIGHLIGHT] ${totalNotesHighlighted} notas resaltadas`);
         } else {
+            console.log(`⚠️ [HIGHLIGHT] No se encontraron notas para resaltar`);
         }
     }
     
@@ -625,6 +639,7 @@
                             targetNoteHead.style.filter = 'drop-shadow(0 0 8px #ff1744)';
                             targetNoteHead.classList.add('note-highlight-sync');
                             
+                            console.log(`🎵 [HIGHLIGHT] Resaltando nota ${targetIndex}/${totalElements} (${currentNote.note})`);
                             
                             // Buscar y resaltar el stem asociado si existe
                             const associatedStem = stems[targetIndex];
@@ -729,6 +744,7 @@
                                 ${svgContent}
                             </div>
                             <p style="color: #666; text-align: center; margin-top: 15px;">
+                                ✅ Partitura generada por MuseScore - Formato SVG de alta calidad
                             </p>
                         `;
                     })
@@ -748,6 +764,7 @@
                                         border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
                         </div>
                         <p style="color: #666; text-align: center; margin-top: 15px;">
+                            ✅ Partitura generada por MuseScore - Formato PNG
                         </p>
                     `;
                 };
@@ -758,6 +775,8 @@
                 img.src = scorePath;
                 
             } else if (currentFormat === 'musicxml') {
+                        console.log('🎯 DEBUG: Entrando en bloque MusicXML - versión actualizada v2');
+        console.log(`🎯 DEBUG: scorePath = ${scorePath}`);
                 // Intentar cargar el archivo MusicXML estático primero para verificar si es válido
                 fetch(scorePath)
                     .then(response => {
@@ -768,8 +787,10 @@
                         }
                     })
                     .then(xmlContent => {
+                        console.log(`📁 MusicXML estático cargado: ${xmlContent.length} caracteres`);
                         // Verificar que sea un XML válido
                         if (xmlContent.trim().length > 100 && xmlContent.includes('<?xml') && xmlContent.includes('score-partwise')) {
+                            console.log('✅ MusicXML estático válido encontrado');
                             // Crear un blob para descarga
                             const blob = new Blob([xmlContent], { type: 'application/vnd.recordare.musicxml+xml' });
                             const downloadUrl = URL.createObjectURL(blob);
@@ -777,6 +798,7 @@
                             scoreContainer.innerHTML = `
                                 <div style="text-align: center; margin: 20px 0; padding: 30px; 
                                            border: 2px solid #28a745; border-radius: 10px; background: #f8fff9;">
+                                    <h4>🎼 Partitura Musical</h4>
                                     <div style="margin: 20px 0;">
                                         <button id="renderSheetMusic" class="btn" style="background: #007bff; color: white; margin-right: 10px;">
                                             👀 Ver Partitura
@@ -790,6 +812,7 @@
                                                                           background: white; border-radius: 10px; 
                                                                           box-shadow: 0 2px 10px rgba(0,0,0,0.1);
                                                                           overflow-x: auto;">
+                                        <h5>📄 Partitura Interactiva</h5>
                                         <div id="osmdContainer" style="min-height: 400px;"></div>
                                         <div style="margin-top: 15px; text-align: center;">
                                             <button id="hideSheetMusic" class="btn" style="background: #6c757d; color: white;">
@@ -819,12 +842,14 @@
                                 document.getElementById('sheetMusicContainer').style.display = 'none';
                             });
                         } else {
+                            console.log(`⚠️ MusicXML estático parece inválido: ${xmlContent.substring(0, 100)}`);
                             throw new Error('MusicXML estático inválido o corrupto');
                         }
                     })
                     .catch(error => {
                         console.log(`❌ No se pudo cargar MusicXML estático: ${error.message}`);
                         // Si no hay archivo estático válido, intentar endpoint API dinámico
+                        console.log('🔄 Intentando generar MusicXML dinámicamente...');
                         tryDynamicMusicXML();
                     });
             }
@@ -832,7 +857,9 @@
         
         // Función para intentar generar MusicXML dinámicamente
         function tryDynamicMusicXML() {
+            console.log('🚀 DEBUG: Ejecutando tryDynamicMusicXML - versión actualizada');
             const apiEndpoint = `/api/musicxml/${songName}/${instrument}`;
+            console.log(`🎵 Intentando endpoint dinámico: ${apiEndpoint}`);
             
             scoreContainer.innerHTML = `
                 <div style="text-align: center; margin: 20px 0; padding: 30px; 
@@ -840,12 +867,14 @@
                     <div style="margin-bottom: 15px;">
                         <div class="loading-spinner"></div>
                     </div>
+                    <h4>🎼 Generando Partitura MusicXML...</h4>
                     <p>Procesando MIDI con MuseScore...</p>
                 </div>
             `;
             
             fetch(apiEndpoint)
                 .then(response => {
+                    console.log(`📡 Respuesta del API: ${response.status} ${response.statusText}`);
                     if (response.ok) {
                         return response.text();
                     } else {
@@ -853,6 +882,8 @@
                     }
                 })
                 .then(musicxmlContent => {
+                    console.log(`✅ MusicXML recibido - ${musicxmlContent.length} caracteres`);
+                    console.log(`🔍 Inicio del XML: ${musicxmlContent.substring(0, 100)}`);
                     
                     // Crear un blob para descarga
                     const blob = new Blob([musicxmlContent], { type: 'application/vnd.recordare.musicxml+xml' });
@@ -861,6 +892,7 @@
                     scoreContainer.innerHTML = `
                         <div style="text-align: center; margin: 20px 0; padding: 30px; 
                                    border: 2px solid #28a745; border-radius: 10px; background: #f8fff9;">
+                            <h4>🎼 Partitura Musical Generada</h4>
                             <p>La partitura ha sido generada exitosamente desde el MIDI.</p>
                             <div style="margin: 20px 0;">
                                 <button id="renderSheetMusicDynamic" class="btn" style="background: #007bff; color: white; margin-right: 10px;">
@@ -875,6 +907,7 @@
                                                                           background: white; border-radius: 10px; 
                                                                           box-shadow: 0 2px 10px rgba(0,0,0,0.1);
                                                                           overflow-x: auto;">
+                                <h5>📄 Partitura Interactiva Generada</h5>
                                 <div id="osmdContainerDynamic" style="min-height: 400px;"></div>
                                 <div style="margin-top: 15px; text-align: center;">
                                     <button id="hideSheetMusicDynamic" class="btn" style="background: #6c757d; color: white;">
@@ -947,6 +980,7 @@
     
     // Función para renderizar MusicXML usando OpenSheetMusicDisplay
     function renderMusicXMLSheet(musicxmlContent, containerId = 'osmdContainer', parentContainerId = 'sheetMusicContainer') {
+        console.log('🎼 Iniciando renderizado de partitura...');
         
         try {
             // Mostrar el contenedor
@@ -954,6 +988,7 @@
             
             // Limpiar el contenedor anterior
             const container = document.getElementById(containerId);
+            container.innerHTML = '<p>🔄 Cargando partitura...</p>';
             
             // Crear instancia de OpenSheetMusicDisplay
             const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(containerId, {
@@ -967,16 +1002,17 @@
                 drawPartAbbreviations: false,
                 fillEmptyMeasuresWithWholeRest: false,
                 setWantedStemDirectionByXml: true,
-                drawUpToMeasureNumber: 20, // Limitar a 20 compases para mejor rendimiento
                 coloringMode: 0,
                 defaultColorNotehead: '#000000',
                 defaultColorStem: '#000000',
                 autoGenerateMultipleRestMeasuresFromRestMeasures: false
             });
             
+            console.log('📄 OpenSheetMusicDisplay inicializado, cargando XML...');
             
             // Cargar el MusicXML
             osmd.load(musicxmlContent).then(() => {
+                console.log('✅ MusicXML cargado, renderizando...');
                 
                 // Renderizar la partitura
                 osmd.render();
@@ -984,6 +1020,8 @@
                 // Guardar la instancia para sincronización
                 currentOSMD = osmd;
                 
+                console.log('🎼 Partitura renderizada exitosamente!');
+                console.log('🎵 Sincronización con audio habilitada');
                 
                 // Extraer tabla de tiempos de notas inmediatamente después de renderizar
                 setTimeout(() => {
@@ -1011,9 +1049,11 @@
                                 🎯 Sincronizar partitura con audio
                             </label>
                             <button id="resetHighlight" class="btn" style="background: #ffc107; color: black; padding: 5px 15px; font-size: 12px;">
+                                🔄 Reiniciar resaltado
                             </button>
                         </div>
                         <small style="color: #666;">
+                            🎵 La sincronización resalta automáticamente las notas durante la reproducción
                         </small>
                     `;
                     
@@ -1025,6 +1065,7 @@
                         document.body.appendChild(syncControls);
                     }
                     
+                    console.log('🎯 [SYNC DEBUG] Checkbox de sincronización global creado');
                 }
                 
                 // Agregar información adicional local
@@ -1032,7 +1073,7 @@
                     <div style="text-align: center; margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
                         <small style="color: #666;">
                             ✨ Partitura renderizada con OpenSheetMusicDisplay
-                            <br/>📏 Mostrando hasta 20 compases para optimizar rendimiento
+                            <br/>📏 Mostrando partitura completa
                             <br/>🎯 Usa los controles de sincronización arriba para habilitar/deshabilitar
                         </small>
                     </div>
@@ -1045,9 +1086,11 @@
                         if (currentOSMD) {
                             currentOSMD.cursor.reset();
                             currentOSMD.render();
+                            console.log('🔄 Resaltado reiniciado');
                         }
                     });
                     resetButton.setAttribute('data-listener-added', 'true');
+                    console.log('🎯 [SYNC DEBUG] Event listener para resetHighlight agregado');
                 }
                 
             }).catch(error => {

@@ -157,8 +157,6 @@ def get_score(song_name, instrument):
             all_notes = score.flatten().notes
             
             for i, element in enumerate(all_notes):
-                if i >= 24:  # Limitar a 24 notas para mejor visualización
-                    break
                     
                 if hasattr(element, 'pitch'):  # Es una nota individual
                     # Convertir pitch de music21 a formato VexFlow
