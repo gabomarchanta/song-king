@@ -379,9 +379,24 @@
         
         const allNotes = [];
         const iterator = currentOSMD.cursor.Iterator;
-        const bpm = 120;
+        
+        // Obtener BPM de la partitura o usar 120 por defecto
+        let bpm = 120;
+        try {
+            const tempoMarking = currentOSMD.sheet.sourceMeasures[0]?.tempoInBPM;
+            if (tempoMarking && tempoMarking > 60 && tempoMarking < 200) {
+                bpm = tempoMarking;
+            }
+        } catch (e) {
+            // Usar BPM por defecto si no se puede extraer
+            bpm = 120;
+        }
         
         currentOSMD.cursor.reset();
+        
+        // Factor de escala para sincronizar con audio real
+        const audioPlayer = globalAudioPlayer;
+        const totalAudioDuration = audioPlayer ? audioPlayer.duration : 200;
         
         while (!iterator.EndReached) {
             const voices = iterator.CurrentVoiceEntries;
@@ -395,21 +410,36 @@
                     
                     if (note != null && note.halfTone != 0 && !note.isRest()) {
                         const osmdTime = iterator.currentTimeStamp.RealValue;
-                        const realTime = osmdTime * 4 * 60 / bpm;
+                        
+                        // Mejorar conversión de tiempo OSMD a tiempo real
+                        // OSMD usa quarter notes como unidad base
+                        const quarterNoteDuration = 60 / bpm; // duración de una negra en segundos
+                        const realTime = osmdTime * quarterNoteDuration;
                         
                         allNotes.push({
-                            note: note.halfTone + 12,
+                            note: note.halfTone,
                             osmdTime: osmdTime,
                             realTime: realTime,
                             noteObj: note,
                             voice: voice,
-                            measure: iterator.CurrentMeasureIndex || 0
+                            measure: iterator.CurrentMeasureIndex || 0,
+                            frequency: note.frequency || 440
                         });
                     }
                 }
             }
             
             iterator.moveToNext();
+        }
+        
+        // Escalar tiempos para que coincidan con la duración real del audio
+        if (allNotes.length > 0 && totalAudioDuration > 0) {
+            const maxMidiTime = Math.max(...allNotes.map(n => n.realTime));
+            const scaleFactor = totalAudioDuration / maxMidiTime;
+            
+            allNotes.forEach(note => {
+                note.realTime *= scaleFactor;
+            });
         }
         
         window.osmdNoteTimings = allNotes.sort((a, b) => a.realTime - b.realTime);
@@ -462,78 +492,102 @@
     
     // Resaltar nota específica
     function highlightNoteAtTime(noteData) {
+        if (!currentOSMD || !currentOSMD.cursor) return;
+        
         // Limpiar highlights anteriores
         clearNoteHighlights();
         
-        // Usar GNotesUnderCursor() según documentación OSMD
         try {
+            // Método 1: Usar GNotesUnderCursor() - más preciso
             const graphicalNotes = currentOSMD.cursor.GNotesUnderCursor();
             if (graphicalNotes && graphicalNotes.length > 0) {
+                let highlightedCount = 0;
+                
                 graphicalNotes.forEach(gNote => {
-                    const svgElement = gNote.getSVGGElement();
-                    if (svgElement) {
-                        svgElement.style.fill = '#ff1744';
-                        svgElement.style.stroke = '#ff1744';
-                        svgElement.style.filter = 'drop-shadow(0 0 8px #ff1744)';
-                        svgElement.classList.add('note-highlight-sync');
-                        
-                        // Limpiar después de 400ms
-                        setTimeout(() => {
-                            svgElement.style.fill = '';
-                            svgElement.style.stroke = '';
-                            svgElement.style.filter = '';
-                            svgElement.classList.remove('note-highlight-sync');
-                        }, 400);
+                    if (gNote && gNote.getSVGGElement) {
+                        const svgElement = gNote.getSVGGElement();
+                        if (svgElement) {
+                            // Aplicar estilo de resaltado más visible
+                            svgElement.style.fill = '#ff4444';
+                            svgElement.style.stroke = '#ff0000';
+                            svgElement.style.strokeWidth = '2px';
+                            svgElement.style.filter = 'drop-shadow(0 0 6px #ff4444) brightness(1.2)';
+                            svgElement.classList.add('note-highlight-sync');
+                            
+                            highlightedCount++;
+                            
+                            // Limpiar resaltado después de un tiempo
+                            setTimeout(() => {
+                                if (svgElement.classList.contains('note-highlight-sync')) {
+                                    svgElement.style.fill = '';
+                                    svgElement.style.stroke = '';
+                                    svgElement.style.strokeWidth = '';
+                                    svgElement.style.filter = '';
+                                    svgElement.classList.remove('note-highlight-sync');
+                                }
+                            }, 600);
+                        }
                     }
                 });
                 
-                console.log(`🎨 [HIGHLIGHT] ${graphicalNotes.length} notas resaltadas usando API OSMD`);
+                if (highlightedCount > 0) {
+                    return; // Éxito con API OSMD
+                }
             }
+            
+            // Método 2: Fallback - resaltar usando cursor visible
+            if (currentOSMD.cursor && currentOSMD.cursor.show) {
+                currentOSMD.cursor.show();
+                
+                // Buscar y resaltar elementos SVG del cursor
+                const cursorElements = document.querySelectorAll('.osmdCursor, .cursor');
+                cursorElements.forEach(cursor => {
+                    cursor.style.opacity = '1';
+                    cursor.style.fill = '#ff4444';
+                    cursor.style.stroke = '#ff0000';
+                });
+                
+                // Ocultar cursor después de un tiempo
+                setTimeout(() => {
+                    cursorElements.forEach(cursor => {
+                        cursor.style.opacity = '';
+                        cursor.style.fill = '';
+                        cursor.style.stroke = '';
+                    });
+                }, 600);
+            }
+            
         } catch (error) {
-            console.log(`⚠️ [HIGHLIGHT] Error con API OSMD, usando fallback: ${error.message}`);
-            // Fallback al resaltado SVG genérico
-            const timeProgressRatio = noteData.realTime / (globalAudioPlayer?.duration || 323);
-            highlightCurrentNoteInSVGByTime(null, timeProgressRatio);
+            console.error('Error en resaltado OSMD:', error.message);
+            
+            // Método 3: Fallback SVG genérico
+            const timeProgressRatio = noteData.realTime / (globalAudioPlayer?.duration || 200);
+            highlightCurrentNoteInSVGByTime(noteData, timeProgressRatio);
         }
     }
     
-    // Nueva función para cargar datos de notas MIDI para sincronización
+    // Función auxiliar para cargar datos MIDI adicionales si es necesario
     function loadNotesDataForSync() {
-        console.log('🎯 [SYNC DEBUG] Cargando datos de notas desde endpoint...');
-        
         const songName = '{{ song_name }}';
         const instrument = '{{ instrument }}';
         const notesEndpoint = `/api/score/${songName}/${instrument}/render`;
         
         fetch(notesEndpoint)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                return response.json();
-            })
+            .then(response => response.ok ? response.json() : Promise.reject(`HTTP ${response.status}`))
             .then(data => {
                 if (data.notes && Array.isArray(data.notes)) {
                     currentNotesData = data.notes;
-                    console.log(`🎯 [SYNC DEBUG] Datos de notas cargados: ${currentNotesData.length} notas`);
-                    console.log('🎯 [SYNC DEBUG] Primeras 3 notas:', currentNotesData.slice(0, 3));
-                } else {
-                    console.log('🎯 [SYNC DEBUG] Respuesta no contiene datos de notas válidos:', data);
                 }
             })
             .catch(error => {
-                console.log('🎯 [SYNC DEBUG] Error cargando datos de notas:', error.message);
+                console.error('Error cargando datos MIDI:', error);
             });
     }
     
     // Función mejorada de resaltado SVG con detección inteligente de notas
     function highlightCurrentNoteInSVGByTime(currentNote, timeProgress) {
-        console.log(`🎵 [HIGHLIGHT] Resaltando en progreso: ${(timeProgress * 100).toFixed(1)}%`);
-        
-        // Limpiar highlights anteriores
         clearNoteHighlights();
         
-        // Buscar en todos los contenedores de partitura
         const containers = ['osmdContainer', 'osmdContainerDynamic'];
         let totalNotesHighlighted = 0;
         
@@ -544,73 +598,63 @@
                 const svgElements = container.querySelectorAll('svg');
                 
                 svgElements.forEach((svg, svgIndex) => {
-                    // Selectores más específicos para notas musicales
                     const noteHeads = svg.querySelectorAll('ellipse[fill="#000000"], ellipse[fill="black"], circle[fill="#000000"], circle[fill="black"]');
                     const paths = svg.querySelectorAll('path[fill="#000000"], path[fill="black"]');
                     const allNoteElements = [...noteHeads, ...paths];
                     
                     if (allNoteElements.length > 0) {
-                                                 // Filtrar elementos que parecen notas (tamaño apropiado) - con manejo de errores
-                         const likelyNotes = allNoteElements.filter(el => {
-                             try {
-                                 const bbox = el.getBBox ? el.getBBox() : { width: 10, height: 10 };
-                                 return bbox.width > 2 && bbox.width < 50 && bbox.height > 2 && bbox.height < 50;
-                             } catch (e) {
-                                 // Si getBBox() falla, asumir que es una nota válida
-                                 return true;
-                             }
-                         });
+                        // Filtrar elementos que parecen notas válidas
+                        const likelyNotes = allNoteElements.filter(el => {
+                            try {
+                                const bbox = el.getBBox ? el.getBBox() : { width: 10, height: 10 };
+                                return bbox.width > 2 && bbox.width < 50 && bbox.height > 2 && bbox.height < 50;
+                            } catch (e) {
+                                return true; // Asumir válido si no se puede verificar
+                            }
+                        });
                         
                         if (likelyNotes.length > 0) {
-                            // Calcular qué grupo de notas resaltar (para acordes/multi-notas)
-                            const notesPerSection = Math.max(1, Math.floor(likelyNotes.length / 20)); // Dividir en ~20 secciones
+                            // Calcular qué nota(s) resaltar basado en el progreso temporal
+                            const notesPerSection = Math.max(1, Math.floor(likelyNotes.length / 20));
                             const sectionIndex = Math.floor(timeProgress * 20);
                             const startIndex = Math.min(sectionIndex * notesPerSection, likelyNotes.length - notesPerSection);
                             const endIndex = Math.min(startIndex + notesPerSection, likelyNotes.length);
                             
-                            console.log(`🎵 [HIGHLIGHT] SVG ${svgIndex}: Resaltando notas ${startIndex}-${endIndex} de ${likelyNotes.length} (sección ${sectionIndex}/20)`);
-                            
-                            // Resaltar grupo de notas
+                            // Resaltar grupo de notas con estilo mejorado
                             for (let i = startIndex; i < endIndex; i++) {
                                 const note = likelyNotes[i];
-                                note.style.fill = '#ff1744';
-                                note.style.stroke = '#ff1744';
-                                note.style.strokeWidth = '2';
-                                note.style.filter = 'drop-shadow(0 0 6px #ff1744)';
+                                note.style.fill = '#ff4444';
+                                note.style.stroke = '#ff0000';
+                                note.style.strokeWidth = '2px';
+                                note.style.filter = 'drop-shadow(0 0 6px #ff4444) brightness(1.2)';
                                 note.classList.add('note-highlight-sync');
                                 totalNotesHighlighted++;
                             }
                             
-                            // Limpiar resaltado después de 300ms
+                            // Limpiar resaltado después de 500ms
                             setTimeout(() => {
                                 for (let i = startIndex; i < endIndex; i++) {
                                     const note = likelyNotes[i];
-                                    note.style.fill = '';
-                                    note.style.stroke = '';
-                                    note.style.strokeWidth = '';
-                                    note.style.filter = '';
-                                    note.classList.remove('note-highlight-sync');
+                                    if (note.classList.contains('note-highlight-sync')) {
+                                        note.style.fill = '';
+                                        note.style.stroke = '';
+                                        note.style.strokeWidth = '';
+                                        note.style.filter = '';
+                                        note.classList.remove('note-highlight-sync');
+                                    }
                                 }
-                            }, 300);
+                            }, 500);
                         }
                     }
                 });
             }
         });
-        
-        if (totalNotesHighlighted > 0) {
-            console.log(`✅ [HIGHLIGHT] ${totalNotesHighlighted} notas resaltadas`);
-        } else {
-            console.log(`⚠️ [HIGHLIGHT] No se encontraron notas para resaltar`);
-        }
     }
     
-    // Función auxiliar para resaltar en SVG (fallback) - Mejorada para notas individuales
+    // Función auxiliar para resaltar notas individuales en SVG
     function highlightCurrentNoteInSVG(currentNote) {
-        // Limpiar highlights anteriores
         clearNoteHighlights();
         
-        // Buscar en todos los contenedores de partitura
         const containers = ['osmdContainer', 'osmdContainerDynamic'];
         
         containers.forEach(containerId => {
@@ -618,51 +662,47 @@
             if (container) {
                 const svgElements = container.querySelectorAll('svg');
                 svgElements.forEach(svg => {
-                    // Buscar elementos específicos de notas (cabezas de nota)
                     const noteHeads = svg.querySelectorAll('ellipse, circle, path[d*="m"]');
                     const stems = svg.querySelectorAll('path[stroke-width]');
                     
-                    // Calcular qué nota resaltar basado en el tiempo actual
                     const totalElements = noteHeads.length;
-                    if (totalElements > 0) {
-                        // Usar el tiempo de la nota para determinar qué elemento resaltar
-                        const noteProgress = (currentNote.start_time % 10) / 10; // Ciclo cada 10 segundos
+                    if (totalElements > 0 && currentNote && currentNote.start_time !== undefined) {
+                        const noteProgress = (currentNote.start_time % 10) / 10;
                         const targetIndex = Math.floor(noteProgress * totalElements);
                         
-                        // Resaltar la cabeza de nota específica
                         const targetNoteHead = noteHeads[targetIndex];
                         if (targetNoteHead) {
-                            // Estilo de resaltado más sutil y específico
-                            targetNoteHead.style.fill = '#ff1744';
-                            targetNoteHead.style.stroke = '#ff1744';
-                            targetNoteHead.style.strokeWidth = '3';
-                            targetNoteHead.style.filter = 'drop-shadow(0 0 8px #ff1744)';
+                            // Aplicar resaltado consistente
+                            targetNoteHead.style.fill = '#ff4444';
+                            targetNoteHead.style.stroke = '#ff0000';
+                            targetNoteHead.style.strokeWidth = '2px';
+                            targetNoteHead.style.filter = 'drop-shadow(0 0 6px #ff4444) brightness(1.2)';
                             targetNoteHead.classList.add('note-highlight-sync');
                             
-                            console.log(`🎵 [HIGHLIGHT] Resaltando nota ${targetIndex}/${totalElements} (${currentNote.note})`);
-                            
-                            // Buscar y resaltar el stem asociado si existe
+                            // Resaltar stem asociado si existe
                             const associatedStem = stems[targetIndex];
                             if (associatedStem) {
-                                associatedStem.style.stroke = '#ff1744';
-                                associatedStem.style.strokeWidth = '4';
+                                associatedStem.style.stroke = '#ff0000';
+                                associatedStem.style.strokeWidth = '3px';
                                 associatedStem.classList.add('note-highlight-sync');
                             }
                             
-                            // Remover el resaltado después de un tiempo más corto para mejor feedback
+                            // Limpiar resaltado
                             setTimeout(() => {
-                                targetNoteHead.style.fill = '';
-                                targetNoteHead.style.stroke = '';
-                                targetNoteHead.style.strokeWidth = '';
-                                targetNoteHead.style.filter = '';
-                                targetNoteHead.classList.remove('note-highlight-sync');
+                                if (targetNoteHead.classList.contains('note-highlight-sync')) {
+                                    targetNoteHead.style.fill = '';
+                                    targetNoteHead.style.stroke = '';
+                                    targetNoteHead.style.strokeWidth = '';
+                                    targetNoteHead.style.filter = '';
+                                    targetNoteHead.classList.remove('note-highlight-sync');
+                                }
                                 
-                                if (associatedStem) {
+                                if (associatedStem && associatedStem.classList.contains('note-highlight-sync')) {
                                     associatedStem.style.stroke = '';
                                     associatedStem.style.strokeWidth = '';
                                     associatedStem.classList.remove('note-highlight-sync');
                                 }
-                            }, 300); // Más rápido para mejor fluidez
+                            }, 500);
                         }
                     }
                 });
@@ -671,18 +711,29 @@
     }
     
     function clearNoteHighlights() {
-        // Limpiar highlights en todos los contenedores
-        const containers = ['osmdContainer', 'osmdContainerDynamic'];
+        // Limpiar highlights en todos los contenedores de partituras
+        const containers = ['osmdContainer', 'osmdContainerDynamic', 'scoreContainer'];
         
         containers.forEach(containerId => {
             const container = document.getElementById(containerId);
             if (container) {
+                // Limpiar elementos con clase de resaltado
                 const highlightedElements = container.querySelectorAll('.note-highlight-sync');
                 highlightedElements.forEach(el => {
                     el.classList.remove('note-highlight-sync');
                     el.style.fill = '';
                     el.style.stroke = '';
                     el.style.strokeWidth = '';
+                    el.style.filter = '';
+                    el.style.opacity = '';
+                });
+                
+                // Limpiar cursors de OSMD que puedan estar visibles
+                const cursors = container.querySelectorAll('.osmdCursor, .cursor');
+                cursors.forEach(cursor => {
+                    cursor.style.opacity = '';
+                    cursor.style.fill = '';
+                    cursor.style.stroke = '';
                 });
             }
         });
